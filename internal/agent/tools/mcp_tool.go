@@ -102,6 +102,7 @@ func (t *MCPTool) Parameters() json.RawMessage {
 // Execute executes the MCP tool
 func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.ToolResult, error) {
 	logger.GetLogger(ctx).Infof("Executing MCP tool: %s from service: %s", t.mcpTool.Name, t.service.Name)
+	execMeta, _ := ToolExecFromContext(ctx)
 
 	// Parse args from json.RawMessage
 	var input MCPInput
@@ -191,6 +192,9 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 	}
 
 	connectAndCall := func(callCtx context.Context) (*mcp.CallToolResult, error) {
+		if execMeta != nil && execMeta.SessionID != "" {
+			callCtx = mcp.WithCallToolMeta(callCtx, map[string]any{"weknora/session_id": execMeta.SessionID})
+		}
 		client, err := getOrCreateMCPClientWithOAuthRetry(
 			callCtx, t.mcpManager, t.service, t.gate, oauthSess, t.mcpTool.Name, toolCallID,
 		)

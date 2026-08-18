@@ -72,6 +72,24 @@ type mcpGoClient struct {
 	initialized bool
 }
 
+type callToolMetaKey struct{}
+
+// WithCallToolMeta attaches trusted server-side metadata to an MCP tool call.
+func WithCallToolMeta(ctx context.Context, fields map[string]any) context.Context {
+	if len(fields) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, callToolMetaKey{}, fields)
+}
+
+func newCallToolRequest(ctx context.Context, name string, args map[string]interface{}) mcp.CallToolRequest {
+	req := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: name, Arguments: args}}
+	if fields, ok := ctx.Value(callToolMetaKey{}).(map[string]any); ok && len(fields) > 0 {
+		req.Params.Meta = &mcp.Meta{AdditionalFields: fields}
+	}
+	return req
+}
+
 // applyAuthHeaders injects the auth header for the SELECTED strategy only —
 // driven by AuthType so static API key / bearer are mutually exclusive (the old
 // code emitted both whenever the fields happened to be set, which double-authed
@@ -475,12 +493,7 @@ func (c *mcpGoClient) CallTool(ctx context.Context, name string, args map[string
 		return nil, ErrNotConnected
 	}
 
-	req := mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name:      name,
-			Arguments: args,
-		},
-	}
+	req := newCallToolRequest(ctx, name, args)
 
 	result, err := oauthCall(ctx, c, func() (*mcp.CallToolResult, error) {
 		return c.client.CallTool(ctx, req)

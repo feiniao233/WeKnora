@@ -1,5 +1,6 @@
-import { get, post, put, del } from '@/utils/request'
+import { get, post, put, del, getDown } from '@/utils/request'
 import { resolveEmbedBaseUrl } from '@/utils/embedBaseUrl'
+import type { ArtifactMeta } from '@/api/chat'
 
 export interface EmbedChannel {
   id: string
@@ -260,6 +261,35 @@ export async function getEmbedMessageSuggestions(
 ) {
   return get<{ success: boolean; data: EmbedMessageSuggestionSet }>(
     `/api/v1/embed/${channelId}/sessions/${sessionId}/messages/${messageId}/suggestions`,
+    { headers: embedSessionHeaders(token, sessionSig, visitorId) },
+  )
+}
+
+export async function listEmbedMessageArtifacts(
+  channelId: string,
+  token: string,
+  sessionId: string,
+  messageId: string,
+  sessionSig: string,
+  visitorId: string,
+) {
+  return get<{ success: boolean; data: ArtifactMeta[] }>(
+    `/api/v1/embed/${encodeURIComponent(channelId)}/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/artifacts`,
+    { headers: embedSessionHeaders(token, sessionSig, visitorId) },
+  )
+}
+
+export async function downloadEmbedMessageArtifact(
+  channelId: string,
+  token: string,
+  sessionId: string,
+  messageId: string,
+  index: number,
+  sessionSig: string,
+  visitorId: string,
+): Promise<Blob> {
+  return getDown(
+    `/api/v1/embed/${encodeURIComponent(channelId)}/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/artifacts/${index}/download`,
     { headers: embedSessionHeaders(token, sessionSig, visitorId) },
   )
 }

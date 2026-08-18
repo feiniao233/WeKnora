@@ -523,6 +523,11 @@
     :session-id="sessionIdForArtifacts"
     :message-id="messageIdForArtifacts"
     :artifacts="artifactList"
+    :embedded-mode="embeddedMode"
+    :embed-channel-id="embedChannelId"
+    :embed-token="embedToken"
+    :embed-session-sig="embedSessionSig"
+    :embed-visitor-id="embedVisitorId"
   />
 </template>
 

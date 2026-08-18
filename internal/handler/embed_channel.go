@@ -459,6 +459,20 @@ func (h *EmbedChannelHandler) EmbedStopSession(c *gin.Context) {
 	h.sessionHandler.StopSession(c)
 }
 
+func (h *EmbedChannelHandler) EmbedListMessageArtifacts(c *gin.Context) {
+	if err := h.ensureEmbedSession(c); err != nil {
+		return
+	}
+	h.sessionHandler.ListMessageArtifacts(c)
+}
+
+func (h *EmbedChannelHandler) EmbedDownloadMessageArtifact(c *gin.Context) {
+	if err := h.ensureEmbedSession(c); err != nil {
+		return
+	}
+	h.sessionHandler.DownloadMessageArtifact(c)
+}
+
 func (h *EmbedChannelHandler) EmbedEnsureMessageSuggestions(c *gin.Context) {
 	if err := h.ensureEmbedSession(c); err != nil {
 		return

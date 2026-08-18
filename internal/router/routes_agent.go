@@ -229,6 +229,8 @@ func RegisterEmbedPublicRoutes(
 		embed.POST("/agent-chat/:session_id", embedHandler.EmbedAgentChat)
 		embed.GET("/messages/:session_id/load", embedHandler.EmbedLoadMessages)
 		embed.POST("/sessions/:session_id/stop", embedHandler.EmbedStopSession)
+		embed.GET("/sessions/:session_id/messages/:message_id/artifacts", embedHandler.EmbedListMessageArtifacts)
+		embed.GET("/sessions/:session_id/messages/:message_id/artifacts/:index/download", embedHandler.EmbedDownloadMessageArtifact)
 		embed.GET("/sessions/:session_id/messages/:message_id/suggestions", embedHandler.EmbedGetMessageSuggestions)
 		embed.POST("/sessions/:session_id/messages/:message_id/suggestions", embedHandler.EmbedEnsureMessageSuggestions)
 		embed.POST("/sessions/:session_id/suggestion-events", embedHandler.EmbedRecordSuggestionEvent)

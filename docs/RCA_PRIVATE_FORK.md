@@ -8,7 +8,7 @@
 | --- | --- |
 | WeKnora | 知识入库与检索、Skill、ReAct Agent、MCP 编排、Embed 对话与报告制品 |
 | Steel | 业务入口、登录态、页面上下文、用户确认、审计展示、知识库管理入口 |
-| RCA 工具服务 | 四个只读 Ops MCP 工具、Steel 会话校验、Embed 短期令牌交换；后续可改名 `mcp-app` |
+| RCA 工具服务 | 四个只读 Ops MCP 工具、一个报告提交工具、Steel 会话校验、Embed 短期令牌交换；后续可改名 `mcp-app` |
 | LLMAPI | OpenAI-compatible 模型入口，不承载业务状态 |
 
 设备型号、告警类型和基础数据变化应由 Skill、SOP 文档及 MCP 适配解决，不为单一设备在 Agent 内写固定分支。
@@ -23,6 +23,7 @@
    - `get_asset_context`
    - `get_topology_context`
    - `query_operational_evidence`
+   - `submit_rca_report`（仅提交待人工确认的报告，不执行处置）
 3. Steel 使用 Embed SDK，并通过同源 `/back/rca/embed-token` 换取短期 `ems_` 令牌；发布令牌只存服务端 `0600` 文件。
 4. 资源通过 `scripts/rca_bootstrap.py` 幂等创建，不通过 SQL 写入 WeKnora 数据库。
 5. Agent 只给出诊断、证据、建议与报告，不声称已经执行处置。写操作和外部消息推送必须进入独立工具，并由 Steel 展示确认步骤。

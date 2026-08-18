@@ -14,6 +14,7 @@ Use this skill to investigate an alarm without changing devices, configurations,
 3. Query time-bounded alarms, logs, and metrics with `query_operational_evidence`. Request only the evidence kinds needed for the current hypothesis.
 4. Search the bound knowledge base for the applicable SOP, device notes, and historical cases.
 5. Compare every candidate cause against both operational evidence and the SOP. Keep source IDs and timestamps in the answer.
+6. After a real RCA reaches its final Markdown report, call `submit_rca_report` with that same report so Steel can request human confirmation.
 
 Never invent a device, interface, topology link, metric, or event that a tool did not return. Tool failures and empty results are missing information, not proof that a component is healthy.
 
@@ -89,6 +90,7 @@ High utilization alone does not identify the traffic source or confirm congestio
 - Evidence supports a scene but not a single cause: conclusion is `suspected`.
 - Two candidates have comparable support: conclusion is `ambiguous` and both remain visible.
 - Never claim a confirmed root cause or perform an external action. Human confirmation is a separate platform step.
+- Never call `submit_rca_report` for greetings, chitchat, ordinary questions, or when stopping for a missing authoritative alarm.
 
 ## Answer format
 

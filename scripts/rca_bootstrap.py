@@ -47,6 +47,7 @@ OPS_TOOLS = [
     "get_asset_context",
     "get_topology_context",
     "query_operational_evidence",
+    "submit_rca_report",
 ]
 KB_INDEXING_STRATEGY = {
     "vector_enabled": True,
@@ -536,7 +537,7 @@ class RCABootstrapper:
                 f"/api/v1/mcp-services/{urllib.parse.quote(mcp_id, safe='')}",
                 {
                     "name": MCP_NAME,
-                    "description": "Steel 运维 MCP 读权限代理",
+                    "description": "Steel 运维 MCP 证据查询与报告提交入口",
                     "enabled": True,
                     "transport_type": "http-streamable",
                     "url": self.config.ops_mcp_url,
@@ -553,7 +554,7 @@ class RCABootstrapper:
                     "/api/v1/mcp-services",
                     {
                         "name": MCP_NAME,
-                        "description": "Steel 运维 MCP 只读入口",
+                        "description": "Steel 运维 MCP 证据查询与报告提交入口",
                         "enabled": True,
                         "transport_type": "http-streamable",
                         "url": self.config.ops_mcp_url,
@@ -591,16 +592,17 @@ class RCABootstrapper:
     def _agent_payload(self, kb_id: str, mcp_id: str) -> Dict[str, Any]:
         return {
             "name": AGENT_NAME,
-            "description": "RCA 运维诊断智能体（只读）",
+            "description": "RCA 运维诊断智能体",
             "avatar": "",
             "config": {
                 "agent_mode": "smart-reasoning",
                 "agent_type": "custom",
                 "system_prompt": (
-                    "你是 RCA 运维诊断助手。仅基于知识库内容与 MCP 只读工具给出可核验证据链结论，"
-                    "外部只读 MCP 工具名为：resolve_alarm, get_asset_context, "
-                    "get_topology_context, query_operational_evidence。"
-                    "禁止发散，不执行或声称已经执行写操作；验证与处置建议必须明确交由人工执行。"
+                    "你是 RCA 运维诊断助手。仅基于知识库内容与 MCP 证据工具给出可核验证据链结论。"
+                    "resolve_alarm, get_asset_context, get_topology_context, query_operational_evidence 均为只读工具。"
+                    "仅当一次真实 RCA 已按流程完成并形成最终 Markdown 报告时，调用 submit_rca_report 提交同一份报告；"
+                    "问候、闲聊、普通问答、缺少权威告警或证据不足时禁止调用。"
+                    "禁止执行或声称已经执行处置；验证与处置建议必须明确交由人工执行。"
                 ),
                 "model_id": self.config.model_id,
                 "rerank_model_id": self.config.rerank_model_id,

@@ -168,6 +168,8 @@ class BootstrapTest(unittest.TestCase):
         credential_calls = [call for call in self.client.calls if call[0] == "PUT" and call[1].endswith("/credentials")]
         self.assertEqual(credential_calls[-1][2], {"api_key": "ops-secret"})
         self.assertEqual(self.client.agents[0]["config"]["allowed_tools"], EMBED_AGENT_TOOLS)
+        self.assertIn("submit_rca_report", OPS_TOOLS)
+        self.assertIn("submit_rca_report", self.client.agents[0]["config"]["system_prompt"])
         self.assertEqual(self.client.agents[0]["config"]["rerank_model_id"], "rerank-model")
         self.assertEqual(self.client.channels[0]["webhook_secret"], "webhook-secret")
         self.assertEqual(

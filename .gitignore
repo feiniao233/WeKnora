@@ -11,6 +11,7 @@
 *_secret
 *.key
 *.crt
+!config/certs/rca-root-ca.crt
 
 # IDE和编辑器文件
 *.swp

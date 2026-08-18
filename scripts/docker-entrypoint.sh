@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+# Import deployment-specific CAs mounted under the standard Debian path.
+if find /usr/local/share/ca-certificates -type f -name '*.crt' -print -quit 2>/dev/null | grep -q .; then
+    update-ca-certificates >/dev/null
+fi
+
 # ─── Fix ownership of bind-mounted directories ───
 # When users bind-mount host directories (e.g. ./skills/preloaded),
 # the mount inherits the host UID/GID which may differ from the

@@ -1,6 +1,6 @@
 services:
   frontend:
-    image: wechatopenai/weknora-ui:${WEKNORA_VERSION:-latest}
+    image: ${WEKNORA_UI_IMAGE:-wechatopenai/weknora-ui:${WEKNORA_VERSION:-latest}}
     # Requires frontend/dist — run ./scripts/build_frontend_dist.sh before --build
     build:
       context: ./frontend
@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
 
   app:
-    image: wechatopenai/weknora-app:${WEKNORA_VERSION:-latest}
+    image: ${WEKNORA_APP_IMAGE:-wechatopenai/weknora-app:${WEKNORA_VERSION:-latest}}
     build:
       context: .
       dockerfile: docker/Dockerfile.app
@@ -40,6 +40,8 @@ services:
       - data-files:/data/files
       - docreader-tmp:/tmp/docreader:ro
       - ./config/config.yaml:/app/config/config.yaml
+      # Trust the private RCA gateway certificate without disabling TLS verification.
+      - ./config/certs/rca-root-ca.crt:/usr/local/share/ca-certificates/rca-root-ca.crt:ro
       # Optional: mount custom skills directory (allows adding skills without rebuilding image)
       - ./skills/preloaded:/app/skills/preloaded
       # Optional: declarative built-in models. Copy config/builtin_models.yaml.example

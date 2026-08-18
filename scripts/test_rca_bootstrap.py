@@ -138,6 +138,7 @@ class BootstrapTest(unittest.TestCase):
             knowledge_dir=str(self.knowledge_dir),
             state_file=self.state_file,
             steel_origin="https://172.16.20.230",
+            embed_origin="https://172.16.20.230:8443",
             ops_mcp_url="https://172.16.20.230/back/rca/mcp",
             webhook_url="https://172.16.20.230/back/rca/assistant/webhook",
             webhook_secret="webhook-secret",
@@ -169,6 +170,10 @@ class BootstrapTest(unittest.TestCase):
         self.assertEqual(self.client.agents[0]["config"]["allowed_tools"], EMBED_AGENT_TOOLS)
         self.assertEqual(self.client.agents[0]["config"]["rerank_model_id"], "rerank-model")
         self.assertEqual(self.client.channels[0]["webhook_secret"], "webhook-secret")
+        self.assertEqual(
+            self.client.channels[0]["allowed_origins"],
+            ["https://172.16.20.230", "https://172.16.20.230:8443"],
+        )
         agent_put_calls = [call for call in self.client.calls if call[0] == "PUT" and call[1].startswith("/api/v1/agents/")]
         self.assertTrue(agent_put_calls)
         self.assertEqual(agent_put_calls[-1][2]["config"]["rerank_model_id"], "rerank-model")

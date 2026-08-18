@@ -25,6 +25,7 @@ DEFAULT_OPS_MCP_KEY_ENV = "OPS_MCP_API_KEY"
 DEFAULT_KNOWLEDGE_DIR = "/root/code/work/rca-app/docs/knowledge"
 DEFAULT_STATE_FILE = "/root/.local/share/weknora/rca-bootstrap.json"
 DEFAULT_STEEL_ORIGIN = "https://172.16.20.230"
+DEFAULT_EMBED_ORIGIN = "https://172.16.20.230:8443"
 DEFAULT_MCP_URL = "https://172.16.20.230/back/rca/mcp"
 DEFAULT_WEBHOOK_URL = "https://172.16.20.230/back/rca/assistant/webhook"
 DEFAULT_WEBHOOK_SECRET_FILE = "/root/.local/share/weknora/weknora-webhook-secret"
@@ -117,7 +118,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--steel-origin",
         default=DEFAULT_STEEL_ORIGIN,
-        help="Embed channel allowed origin.",
+        help="Steel parent page allowed origin.",
+    )
+    parser.add_argument(
+        "--embed-origin",
+        default=DEFAULT_EMBED_ORIGIN,
+        help="Public WeKnora iframe allowed origin.",
     )
     parser.add_argument("--webhook-url", default=DEFAULT_WEBHOOK_URL, help="Signed assistant event webhook URL.")
     parser.add_argument(
@@ -387,6 +393,7 @@ class RCAConfig:
         knowledge_dir: str,
         state_file: Path,
         steel_origin: str,
+        embed_origin: str,
         ops_mcp_url: str,
         webhook_url: str,
         webhook_secret: str,
@@ -399,6 +406,7 @@ class RCAConfig:
         self.knowledge_dir = knowledge_dir
         self.state_file = state_file
         self.steel_origin = steel_origin
+        self.embed_origin = embed_origin
         self.ops_mcp_url = ops_mcp_url
         self.webhook_url = webhook_url
         self.webhook_secret = webhook_secret
@@ -659,7 +667,7 @@ class RCABootstrapper:
         cfg = {
             "name": EMBED_CHANNEL_NAME,
             "enabled": True,
-            "allowed_origins": [self.config.steel_origin],
+            "allowed_origins": list(dict.fromkeys([self.config.steel_origin, self.config.embed_origin])),
             "rate_limit_per_minute": 120,
             "rate_limit_per_day": 10000,
             "allow_web_search": False,
@@ -781,6 +789,7 @@ def dry_run_summary(config: RCAConfig, state: BootstrapState) -> Dict[str, Any]:
             "agent_name": AGENT_NAME,
             "embed_channel_name": EMBED_CHANNEL_NAME,
             "steel_origin": config.steel_origin,
+            "embed_origin": config.embed_origin,
             "rerank_model_id": config.rerank_model_id,
             "state_file": str(config.state_file),
             "state_has_token": bool(state.get("embed_publish_token")),
@@ -810,6 +819,7 @@ def build_bootstrap_config(args: argparse.Namespace) -> Tuple[RCAConfig, str, st
             knowledge_dir=args.knowledge_dir,
             state_file=Path(args.state_file).expanduser(),
             steel_origin=args.steel_origin,
+            embed_origin=args.embed_origin,
             ops_mcp_url=args.ops_mcp_url,
             webhook_url=args.webhook_url,
             webhook_secret=webhook_secret,
@@ -831,6 +841,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             knowledge_dir=args.knowledge_dir,
             state_file=Path(args.state_file).expanduser(),
             steel_origin=args.steel_origin,
+            embed_origin=args.embed_origin,
             ops_mcp_url=args.ops_mcp_url,
             webhook_url=args.webhook_url,
             webhook_secret="",

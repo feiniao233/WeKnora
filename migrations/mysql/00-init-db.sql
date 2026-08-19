@@ -44,6 +44,7 @@ CREATE TABLE knowledge_bases (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     tenant_id INT NOT NULL,
+    category VARCHAR(64) NOT NULL DEFAULT 'general',
     chunking_config JSON NOT NULL,
     image_processing_config JSON NOT NULL,
     embedding_model_id VARCHAR(64) NOT NULL,

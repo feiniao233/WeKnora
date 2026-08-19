@@ -17,6 +17,7 @@ type KnowledgeBase struct {
 	ID                    string                 `json:"id"`
 	Name                  string                 `json:"name"` // Name must be unique within the same tenant
 	Type                  string                 `json:"type"`
+	Category              string                 `json:"category"`
 	IsTemporary           bool                   `json:"is_temporary"`
 	IsPinned              bool                   `json:"is_pinned"`
 	Description           string                 `json:"description"`
@@ -331,6 +332,7 @@ func (c *Client) ListKnowledgeBases(ctx context.Context) ([]KnowledgeBase, error
 type UpdateKnowledgeBaseRequest struct {
 	Name        string               `json:"name"`
 	Description string               `json:"description"`
+	Category    string               `json:"category,omitempty"`
 	Config      *KnowledgeBaseConfig `json:"config"`
 }
 

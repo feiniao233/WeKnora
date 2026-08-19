@@ -55,6 +55,7 @@ const taskQueueKnowledgeBaseTestDDL = `
 CREATE TABLE IF NOT EXISTS knowledge_bases (
     id         VARCHAR(64) PRIMARY KEY,
     tenant_id  INTEGER NOT NULL,
+    category   TEXT NOT NULL DEFAULT 'general',
     deleted_at DATETIME
 );
 `
@@ -350,6 +351,7 @@ func TestTaskPendingOps_EnqueueIfKnowledgeBaseActive(t *testing.T) {
 	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases (
 		id VARCHAR(64) PRIMARY KEY,
 		tenant_id INTEGER NOT NULL,
+		category TEXT NOT NULL DEFAULT 'general',
 		deleted_at DATETIME
 	)`).Error)
 	require.NoError(t, db.Exec(

@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     description TEXT,
     tenant_id INTEGER NOT NULL,
     type VARCHAR(32) NOT NULL DEFAULT 'document',
+    category TEXT NOT NULL DEFAULT 'general',
     chunking_config TEXT NOT NULL DEFAULT '{}',
     image_processing_config TEXT NOT NULL DEFAULT '{}',
     embedding_model_id VARCHAR(64) NOT NULL,

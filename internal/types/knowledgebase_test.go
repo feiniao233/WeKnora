@@ -33,6 +33,37 @@ func TestParseProviderScheme(t *testing.T) {
 	}
 }
 
+func TestKnowledgeBaseCategory(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+		valid bool
+	}{
+		{"", KnowledgeBaseCategoryGeneral, true},
+		{" MANUFACTURER_MANUAL ", KnowledgeBaseCategoryManufacturerManual, true},
+		{"fault_case", KnowledgeBaseCategoryFaultCase, true},
+		{"vendor-certificate", "vendor-certificate", true},
+		{"../skills", "../skills", false},
+		{strings.Repeat("a", 65), strings.Repeat("a", 65), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := NormalizeKnowledgeBaseCategory(tt.input); got != tt.want {
+				t.Fatalf("NormalizeKnowledgeBaseCategory(%q)=%q, want %q", tt.input, got, tt.want)
+			}
+			if got := IsValidKnowledgeBaseCategory(tt.input); got != tt.valid {
+				t.Fatalf("IsValidKnowledgeBaseCategory(%q)=%v, want %v", tt.input, got, tt.valid)
+			}
+		})
+	}
+
+	kb := &KnowledgeBase{}
+	kb.EnsureDefaults()
+	if kb.Category != KnowledgeBaseCategoryGeneral {
+		t.Fatalf("empty category should default to %q, got %q", KnowledgeBaseCategoryGeneral, kb.Category)
+	}
+}
+
 func TestInferStorageFromFilePath(t *testing.T) {
 	tests := []struct {
 		input string

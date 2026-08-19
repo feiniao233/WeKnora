@@ -66,12 +66,13 @@ type KnowledgeBaseService interface {
 	//   - id: Unique identifier of the knowledge base
 	//   - name: New knowledge base name
 	//   - description: New knowledge base description
+	//   - category: Optional business category update; nil preserves the existing category
 	//   - config: Knowledge base configuration, including chunking strategy, vectorization settings, etc.
 	// Returns:
 	//   - Updated knowledge base object
 	//   - Possible errors such as not existing, insufficient permissions, etc.
 	UpdateKnowledgeBase(ctx context.Context,
-		id string, name string, description string, config *types.KnowledgeBaseConfig,
+		id string, name string, description string, category *string, config *types.KnowledgeBaseConfig,
 	) (*types.KnowledgeBase, error)
 
 	// DeleteKnowledgeBase deletes a knowledge base

@@ -488,6 +488,7 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 	id string,
 	name string,
 	description string,
+	category *string,
 	config *types.KnowledgeBaseConfig,
 ) (*types.KnowledgeBase, error) {
 	if id == "" {
@@ -513,6 +514,9 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 	if kb.Description != description {
 		changedFields = append(changedFields, "description")
 	}
+	if category != nil && kb.Category != types.NormalizeKnowledgeBaseCategory(*category) {
+		changedFields = append(changedFields, "category")
+	}
 	if config != nil {
 		changedFields = append(changedFields, "config")
 	}
@@ -520,6 +524,9 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 	// Update the knowledge base properties
 	kb.Name = name
 	kb.Description = description
+	if category != nil {
+		kb.Category = types.NormalizeKnowledgeBaseCategory(*category)
+	}
 	if config != nil {
 		kb.ChunkingConfig = config.ChunkingConfig
 		kb.ImageProcessingConfig = config.ImageProcessingConfig

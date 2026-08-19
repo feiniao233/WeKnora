@@ -366,6 +366,11 @@ func (h *KnowledgeBaseHandler) CreateKnowledgeBase(c *gin.Context) {
 		c.Error(err)
 		return
 	}
+	req.Category = types.NormalizeKnowledgeBaseCategory(req.Category)
+	if !types.IsValidKnowledgeBaseCategory(req.Category) {
+		c.Error(apperrors.NewBadRequestError("Invalid knowledge base category"))
+		return
+	}
 	types.NormalizeKnowledgeBasePromptInstructions(&req)
 	if err := validateKnowledgeBasePromptInstructions(&req); err != nil {
 		c.Error(err)
@@ -832,6 +837,7 @@ func (h *KnowledgeBaseHandler) TogglePinKnowledgeBase(c *gin.Context) {
 type UpdateKnowledgeBaseRequest struct {
 	Name        string                     `json:"name"        binding:"required"`
 	Description string                     `json:"description"`
+	Category    *string                    `json:"category"`
 	Config      *types.KnowledgeBaseConfig `json:"config"`
 }
 
@@ -883,12 +889,20 @@ func (h *KnowledgeBaseHandler) UpdateKnowledgeBase(c *gin.Context) {
 			return
 		}
 	}
+	if req.Category != nil {
+		normalized := types.NormalizeKnowledgeBaseCategory(*req.Category)
+		if !types.IsValidKnowledgeBaseCategory(normalized) {
+			c.Error(apperrors.NewBadRequestError("Invalid knowledge base category"))
+			return
+		}
+		req.Category = &normalized
+	}
 
 	logger.Infof(ctx, "Updating knowledge base, ID: %s, name: %s",
 		secutils.SanitizeForLog(id), secutils.SanitizeForLog(req.Name))
 
 	// Update the knowledge base
-	kb, err := h.service.UpdateKnowledgeBase(ctx, id, req.Name, req.Description, req.Config)
+	kb, err := h.service.UpdateKnowledgeBase(ctx, id, req.Name, req.Description, req.Category, req.Config)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(apperrors.NewInternalServerError(err.Error()))

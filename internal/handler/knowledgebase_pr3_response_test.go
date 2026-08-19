@@ -116,6 +116,28 @@ func TestCreateKB_GenericErrorStillFallsThroughTo500(t *testing.T) {
 	}
 }
 
+func TestCreateKB_NormalizesAndValidatesCategory(t *testing.T) {
+	t.Run("missing category defaults to general", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/knowledge-bases", strings.NewReader(`{"name":"kb"}`))
+		req.Header.Set("Content-Type", "application/json")
+		newCreateKBRouter(&stubKBCreateService{}).ServeHTTP(w, req)
+		if w.Code != http.StatusCreated || !strings.Contains(w.Body.String(), `"category":"general"`) {
+			t.Fatalf("expected normalized general category, status=%d body=%s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("unsafe category is rejected", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/knowledge-bases", strings.NewReader(`{"name":"kb","category":"../skills"}`))
+		req.Header.Set("Content-Type", "application/json")
+		newCreateKBRouter(&stubKBCreateService{}).ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+		}
+	})
+}
+
 type errSentinel string
 
 func (e errSentinel) Error() string { return string(e) }

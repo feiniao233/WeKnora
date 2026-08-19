@@ -82,6 +82,7 @@ const resetPendingKnowledgeBasesDDL = `
 CREATE TABLE IF NOT EXISTS knowledge_bases (
     id          VARCHAR(64) PRIMARY KEY,
     tenant_id   INTEGER NOT NULL DEFAULT 0,
+    category    TEXT NOT NULL DEFAULT 'general',
     deleted_at  DATETIME
 );
 `

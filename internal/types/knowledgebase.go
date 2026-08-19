@@ -3,6 +3,7 @@ package types
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"time"
 
@@ -35,6 +36,28 @@ const (
 	KnowledgeBaseTypeWiki     = "wiki"
 )
 
+const (
+	KnowledgeBaseCategoryGeneral            = "general"
+	KnowledgeBaseCategoryManufacturerManual = "manufacturer_manual"
+	KnowledgeBaseCategoryFaultCase          = "fault_case"
+)
+
+var knowledgeBaseCategoryPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+// NormalizeKnowledgeBaseCategory keeps old rows and clients in the general bucket.
+func NormalizeKnowledgeBaseCategory(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return KnowledgeBaseCategoryGeneral
+	}
+	return value
+}
+
+// IsValidKnowledgeBaseCategory validates the stable machine key stored on a KB.
+func IsValidKnowledgeBaseCategory(value string) bool {
+	return knowledgeBaseCategoryPattern.MatchString(NormalizeKnowledgeBaseCategory(value))
+}
+
 // FAQIndexMode represents the FAQ index mode: only index questions or index questions and answers
 type FAQIndexMode string
 
@@ -63,6 +86,9 @@ type KnowledgeBase struct {
 	Name string `yaml:"name"                    json:"name"`
 	// Type of the knowledge base (document, faq, etc.)
 	Type string `yaml:"type"                    json:"type"                    gorm:"type:varchar(32);default:'document'"`
+	// Category is a business-facing bucket inside one KB type, for example
+	// manufacturer_manual or fault_case. It does not affect retrieval behavior.
+	Category string `yaml:"category"                json:"category"                 gorm:"type:varchar(64);not null;default:'general';index"`
 	// Whether this knowledge base is temporary (ephemeral) and should be hidden from UI
 	IsTemporary bool `yaml:"is_temporary"            json:"is_temporary"            gorm:"default:false"`
 	// Description of the knowledge base
@@ -693,6 +719,7 @@ func (kb *KnowledgeBase) EnsureDefaults() {
 	if kb.Type == "" {
 		kb.Type = KnowledgeBaseTypeDocument
 	}
+	kb.Category = NormalizeKnowledgeBaseCategory(kb.Category)
 	// Clear type-specific configs that don't belong
 	if kb.Type != KnowledgeBaseTypeFAQ {
 		kb.FAQConfig = nil

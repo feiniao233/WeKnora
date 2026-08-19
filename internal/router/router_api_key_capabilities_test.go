@@ -182,6 +182,37 @@ func TestAgentReadRoutesDeclareReadAgentsCapability(t *testing.T) {
 	}
 }
 
+func TestSkillReadRoutesDeclareReadOrManageAgentsCapability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	g := &rbacGuards{}
+	v1 := gin.New().Group("/api/v1")
+
+	RegisterSkillRoutes(v1, &handler.SkillHandler{}, g)
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/skills"},
+		{http.MethodGet, "/api/v1/skills/:name"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			policy := mustLookupAPIKeyPolicy(t, g, tc.method, tc.path)
+			if !policy.RequireFullAccess {
+				t.Fatal("policy should require full access without a matching capability")
+			}
+			if !policyHasCapability(policy, types.APIKeyCapabilityReadAgents) {
+				t.Fatalf("policy capabilities = %#v, want read_agents", policy.Capabilities)
+			}
+			if !policyHasCapability(policy, types.APIKeyCapabilityManageAgents) {
+				t.Fatalf("policy capabilities = %#v, want manage_agents", policy.Capabilities)
+			}
+		})
+	}
+}
+
 func TestAgentWriteRoutesRequireManageAgentsCapability(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	g := &rbacGuards{}

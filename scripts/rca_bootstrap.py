@@ -486,6 +486,7 @@ class RCABootstrapper:
                         "name": KB_NAME,
                         "description": "RCA 运维知识库（预置）",
                         "type": "document",
+                        "category": "general",
                         "embedding_model_id": self.config.embedding_model_id,
                         "indexing_strategy": KB_INDEXING_STRATEGY,
                     },
@@ -745,9 +746,6 @@ class RCABootstrapper:
             or not self.config.embedding_model_id.strip()
         ):
             raise RuntimeError("chat, rerank, and embedding model ids are required")
-        if not collect_knowledge_files(self.config.knowledge_dir):
-            raise RuntimeError(f"No knowledge files found under {self.config.knowledge_dir}")
-
         kb_id = self._ensure_kb()
         mcp_id = self._ensure_mcp()
         agent_id = self._ensure_agent(kb_id, mcp_id)

@@ -59,7 +59,7 @@ class FakeClient:
         self.calls.append(("POST", path, payload))
         parts = path.strip("/").split("/")
         if parts == ["api", "v1", "knowledge-bases"]:
-            row = {"id": self.new_id("kb"), "name": payload["name"]}
+            row = {"id": self.new_id("kb"), "name": payload["name"], "category": payload["category"]}
             self.kbs.append(row)
             self.docs[row["id"]] = []
             return self.response(row)
@@ -163,6 +163,7 @@ class BootstrapTest(unittest.TestCase):
 
         kb_create = next(call for call in self.client.calls if call[:2] == ("POST", "/api/v1/knowledge-bases"))
         self.assertEqual(kb_create[2]["indexing_strategy"], KB_INDEXING_STRATEGY)
+        self.assertEqual(kb_create[2]["category"], "general")
         mcp_create = next(call for call in self.client.calls if call[:2] == ("POST", "/api/v1/mcp-services"))
         self.assertNotIn("api_key", mcp_create[2]["auth_config"])
         credential_calls = [call for call in self.client.calls if call[0] == "PUT" and call[1].endswith("/credentials")]
@@ -191,12 +192,12 @@ class BootstrapTest(unittest.TestCase):
         self.assertEqual(len(rotations), 1)
         self.assertEqual(recovered["embed"]["publish_token"], "rota...cret")
 
-    def test_missing_knowledge_fails_before_api_writes(self):
+    def test_empty_knowledge_directory_creates_resources_without_uploads(self):
         for item in self.knowledge_dir.iterdir():
             item.unlink()
-        with self.assertRaisesRegex(RuntimeError, "No knowledge files"):
-            self.run_bootstrap()
-        self.assertEqual(self.client.calls, [])
+        result = self.run_bootstrap()
+        self.assertEqual(result["status"], "ok")
+        self.assertFalse(any(call[0] == "FILE" for call in self.client.calls))
 
 
 if __name__ == "__main__":

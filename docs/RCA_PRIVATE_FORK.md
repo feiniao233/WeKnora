@@ -11,7 +11,9 @@
 | RCA 工具服务 | 四个只读 Ops MCP 工具、一个报告提交工具、Steel 会话校验、Embed 短期令牌交换；后续可改名 `mcp-app` |
 | LLMAPI | OpenAI-compatible 模型入口，不承载业务状态 |
 
-设备型号、告警类型和基础数据变化应由 Skill、SOP 文档及 MCP 适配解决，不为单一设备在 Agent 内写固定分支。
+设备型号、告警类型和基础数据变化应由 Skill 过程资源、知识库事实材料及 MCP 适配解决，不为单一设备在 Agent 内写固定分支。
+
+Skill 与知识库是两个独立模块。Skill 保存诊断步骤、停止条件和 SOP 引用，RCA 流程位于 `skills/preloaded/rca-diagnosis/references/`；知识库只保存厂家手册、故障案例等可检索事实材料。知识库分类默认支持 `manufacturer_manual`、`fault_case` 和 `general`，也允许符合命名规则的自定义分类。不要把 Skill/SOP 重复上传到知识库。
 
 ## 稳定接口
 

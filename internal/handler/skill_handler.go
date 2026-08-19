@@ -2,12 +2,16 @@ package handler
 
 import (
 	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 )
+
+var skillNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
 // SkillHandler handles skill-related HTTP requests
 type SkillHandler struct {
@@ -25,6 +29,11 @@ func NewSkillHandler(skillService interfaces.SkillService) *SkillHandler {
 type SkillInfoResponse struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+}
+
+type SkillDetailResponse struct {
+	SkillInfoResponse
+	Instructions string `json:"instructions"`
 }
 
 // ListSkills godoc
@@ -63,5 +72,28 @@ func (h *SkillHandler) ListSkills(c *gin.Context) {
 		// Skills can be selected before a workspace sandbox is configured; the
 		// execution path remains disabled until the agent chooses a config.
 		"skills_available": true,
+	})
+}
+
+// GetSkill returns one preloaded skill's instructions for the management UI.
+func (h *SkillHandler) GetSkill(c *gin.Context) {
+	ctx := c.Request.Context()
+	name := strings.TrimSpace(c.Param("name"))
+	if !skillNamePattern.MatchString(name) {
+		c.Error(errors.NewBadRequestError("Invalid skill name"))
+		return
+	}
+	skill, err := h.skillService.GetSkillByName(ctx, name)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{"skill_name": name})
+		c.Error(errors.NewNotFoundError("Skill not found"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": SkillDetailResponse{
+			SkillInfoResponse: SkillInfoResponse{Name: skill.Name, Description: skill.Description},
+			Instructions:      skill.Instructions,
+		},
 	})
 }

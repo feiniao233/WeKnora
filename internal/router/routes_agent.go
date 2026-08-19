@@ -77,6 +77,8 @@ func RegisterSkillRoutes(r *gin.RouterGroup, skillHandler *handler.SkillHandler,
 	{
 		// List all preloaded skills — Viewer+
 		skills.GET("", g.Viewer(), skillHandler.ListSkills)
+		// Inspect one preloaded skill — Viewer+
+		skills.GET("/:name", g.Viewer(), skillHandler.GetSkill)
 	}
 }
 

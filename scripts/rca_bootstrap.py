@@ -18,23 +18,19 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 DEFAULT_BASE_URL = "http://127.0.0.1"
 DEFAULT_API_KEY_FILE = "/root/.local/share/weknora/bootstrap-api-key"
 DEFAULT_OPS_MCP_KEY_ENV = "OPS_MCP_API_KEY"
 DEFAULT_KNOWLEDGE_DIR = "/root/code/work/rca-app/docs/knowledge"
 DEFAULT_STATE_FILE = "/root/.local/share/weknora/rca-bootstrap.json"
-DEFAULT_STEEL_ORIGIN = "https://172.16.20.230"
-DEFAULT_EMBED_ORIGIN = "https://172.16.20.230:8443"
 DEFAULT_MCP_URL = "https://172.16.20.230/back/rca/mcp"
-DEFAULT_WEBHOOK_URL = "https://172.16.20.230/back/rca/assistant/webhook"
-DEFAULT_WEBHOOK_SECRET_FILE = "/root/.local/share/weknora/weknora-webhook-secret"
 
 KB_NAME = "RCA 运维知识库"
 MCP_NAME = "Steel Ops MCP (只读)"
 AGENT_NAME = "RCA 诊断助手"
-EMBED_CHANNEL_NAME = "Steel RCA 助手"
-EMBED_AGENT_TOOLS = [
+LEGACY_EMBED_CHANNEL_NAME = "Steel RCA 助手"
+AGENT_TOOLS = [
     "thinking",
     "todo_write",
     "knowledge_search",
@@ -71,7 +67,7 @@ class ApiError(RuntimeError):
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="rca_bootstrap.py",
-        description="Bootstrap RCA knowledge base, MCP, Agent, and Embed channel.",
+        description="Bootstrap RCA knowledge base, MCP, and Agent.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         add_help=True,
     )
@@ -117,22 +113,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="State cache file path, stored mode 0600.",
     )
     parser.add_argument(
-        "--steel-origin",
-        default=DEFAULT_STEEL_ORIGIN,
-        help="Steel parent page allowed origin.",
-    )
-    parser.add_argument(
-        "--embed-origin",
-        default=DEFAULT_EMBED_ORIGIN,
-        help="Public WeKnora iframe allowed origin.",
-    )
-    parser.add_argument("--webhook-url", default=DEFAULT_WEBHOOK_URL, help="Signed assistant event webhook URL.")
-    parser.add_argument(
-        "--webhook-secret-file",
-        default=DEFAULT_WEBHOOK_SECRET_FILE,
-        help="Webhook HMAC secret file path.",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print endpoint plan only, no key/env/network calls.",
@@ -169,15 +149,6 @@ def read_secret(
     return env_value or None
 
 
-def redact_token(token: Optional[str]) -> Optional[str]:
-    if not token:
-        return None
-    value = token.strip()
-    if len(value) <= 8:
-        return "***"
-    return f"{value[:4]}...{value[-4:]}"
-
-
 def unwrap_api_payload(payload: Any) -> Any:
     if not isinstance(payload, dict):
         return payload
@@ -193,7 +164,7 @@ def as_list(payload: Any) -> List[Dict[str, Any]]:
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
-        for key in ("items", "data", "knowledge_bases", "mcp_services", "agents", "embed_channels"):
+        for key in ("items", "data", "knowledge_bases", "mcp_services", "agents"):
             value = data.get(key)
             if isinstance(value, list):
                 return value
@@ -323,6 +294,9 @@ class ApiClient:
             headers={"Content-Type": "application/json"},
         )
 
+    def delete_json(self, path: str) -> Any:
+        return self._request("DELETE", path)
+
     def post_multipart_file(self, path: str, file_path: Path, field_name: str = "file") -> Any:
         boundary = "----weknora-bootstrap-boundary"
         filename = file_path.name
@@ -383,6 +357,9 @@ class BootstrapState:
     def set_id(self, key: str, value: str) -> None:
         self.data[key] = value
 
+    def discard(self, key: str) -> None:
+        self.data.pop(key, None)
+
 
 class RCAConfig:
     def __init__(
@@ -393,11 +370,7 @@ class RCAConfig:
         embedding_model_id: str,
         knowledge_dir: str,
         state_file: Path,
-        steel_origin: str,
-        embed_origin: str,
         ops_mcp_url: str,
-        webhook_url: str,
-        webhook_secret: str,
         dry_run: bool = False,
     ) -> None:
         self.base_url = base_url
@@ -406,11 +379,7 @@ class RCAConfig:
         self.embedding_model_id = embedding_model_id
         self.knowledge_dir = knowledge_dir
         self.state_file = state_file
-        self.steel_origin = steel_origin
-        self.embed_origin = embed_origin
         self.ops_mcp_url = ops_mcp_url
-        self.webhook_url = webhook_url
-        self.webhook_secret = webhook_secret
         self.dry_run = dry_run
 
 
@@ -432,7 +401,6 @@ class RCABootstrapper:
             "state_file": str(config.state_file),
             "status": "started",
             "resource_ids": {},
-            "embed": {},
         }
 
     def _record(self, phase: str, **fields: Any) -> None:
@@ -449,6 +417,9 @@ class RCABootstrapper:
 
     def _put(self, path: str, payload: Dict[str, Any]) -> Any:
         return self.client.put_json(path, payload)
+
+    def _delete(self, path: str) -> Any:
+        return self.client.delete_json(path)
 
     def _post_file(self, path: str, file_path: Path) -> Any:
         return self.client.post_multipart_file(path, file_path)
@@ -622,7 +593,7 @@ class RCABootstrapper:
                 "multi_turn_enabled": True,
                 "memory_enabled": False,
                 "temperature": 0.1,
-                "allowed_tools": EMBED_AGENT_TOOLS,
+                "allowed_tools": AGENT_TOOLS,
             },
         }
 
@@ -649,86 +620,25 @@ class RCABootstrapper:
         self.state.set_id("agent_id", agent_id)
         return agent_id
 
-    def _ensure_embed_channel(self, agent_id: str) -> Tuple[str, str]:
-        if self.config.dry_run:
-            self._record(
-                "embed_channel",
-                endpoint="/api/v1/agents/:id/embed-channels",
-                action="ensure (planned)",
-            )
-            existing = self.state.get("embed_channel_id")
-            token = self.state.get("embed_publish_token") or "token-placeholder"
-            return existing or "embed-channel-placeholder", token
-
-        self._record(
-            "embed_channel",
-            endpoint="/api/v1/agents/:id/embed-channels",
-            action="ensure",
-        )
-        rows = as_list(self._get(f"/api/v1/agents/{urllib.parse.quote(agent_id, safe='')}/embed-channels"))
-        found = self._find_by_name(rows, EMBED_CHANNEL_NAME)
-        cfg = {
-            "name": EMBED_CHANNEL_NAME,
-            "enabled": True,
-            "allowed_origins": list(dict.fromkeys([self.config.steel_origin, self.config.embed_origin])),
-            "rate_limit_per_minute": 120,
-            "rate_limit_per_day": 10000,
-            "allow_web_search": False,
-            "allow_file_upload": False,
-            "default_locale": "zh-CN",
-            "webhook_url": self.config.webhook_url,
-            "webhook_secret": self.config.webhook_secret,
-        }
-        if found:
-            channel_id = str(found["id"])
-            self._put(f"/api/v1/embed-channels/{urllib.parse.quote(channel_id, safe='')}", cfg)
-            state_channel_id = str(self.state.get("embed_channel_id", ""))
-            state_token = str(self.state.get("embed_publish_token", ""))
-            if state_channel_id == channel_id and state_token:
-                self.state.set_id("embed_channel_id", channel_id)
-                self.state.set_id("embed_publish_token", state_token)
-                self._record("embed_channel", action="updated", id=channel_id)
-                return channel_id, state_token
-            rotate = unwrap_api_payload(
-                self._post(
-                    f"/api/v1/embed-channels/{urllib.parse.quote(channel_id, safe='')}/rotate-token",
-                    {},
-                )
-            )
-            if not isinstance(rotate, dict) or "publish_token" not in rotate:
-                raise RuntimeError("Rotate token response missing publish_token")
-            server_token = str(rotate["publish_token"])
-            self.state.set_id("embed_channel_id", channel_id)
-            self.state.set_id("embed_publish_token", server_token)
-            self._record("embed_channel", action="rotated", id=channel_id)
-            self._record("embed_channel", action="updated", id=channel_id)
-            return channel_id, server_token
-        else:
-            created = unwrap_api_payload(
-                self._post(
-                    f"/api/v1/agents/{urllib.parse.quote(agent_id, safe='')}/embed-channels",
-                    cfg,
-                )
-            )
-            if not isinstance(created, dict) or "id" not in created:
-                raise RuntimeError("Unexpected embed channel create payload")
-            channel_id = str(created["id"])
-            publish_token = str(created.get("publish_token", ""))
-            self.state.set_id("embed_channel_id", channel_id)
-            if not publish_token:
-                fresh = unwrap_api_payload(
-                    self._post(
-                        f"/api/v1/embed-channels/{urllib.parse.quote(channel_id, safe='')}/rotate-token",
-                        {},
-                    )
-                )
-                if not isinstance(fresh, dict) or "publish_token" not in fresh:
-                    raise RuntimeError("Embed channel create response missing publish_token")
-                publish_token = str(fresh["publish_token"])
-            self.state.set_id("embed_publish_token", publish_token)
-            self._record("embed_channel", action="created", id=channel_id)
-            return channel_id, publish_token
-
+    def _retire_legacy_embed_channel(self) -> None:
+        channel_id = str(self.state.get("embed_channel_id", "")).strip()
+        if not channel_id:
+            self.state.discard("embed_publish_token")
+            return
+        path = f"/api/v1/embed-channels/{urllib.parse.quote(channel_id, safe='')}"
+        try:
+            channel = unwrap_api_payload(self._get(path))
+        except ApiError as exc:
+            if exc.status != 404:
+                raise
+            channel = None
+        if isinstance(channel, dict) and channel.get("name") != LEGACY_EMBED_CHANNEL_NAME:
+            raise RuntimeError("Refusing to delete an Embed channel not created by RCA bootstrap")
+        if channel is not None:
+            self._delete(path)
+            self._record("legacy_embed_channel", endpoint=path, action="deleted", id=channel_id)
+        self.state.discard("embed_channel_id")
+        self.state.discard("embed_publish_token")
 
     def run(self) -> Dict[str, Any]:
         if self.config.dry_run:
@@ -736,8 +646,6 @@ class RCABootstrapper:
             self.summary["resource_ids"]["knowledge_base_id"] = self.state.get("knowledge_base_id")
             self.summary["resource_ids"]["mcp_service_id"] = self.state.get("mcp_service_id")
             self.summary["resource_ids"]["agent_id"] = self.state.get("agent_id")
-            self.summary["resource_ids"]["embed_channel_id"] = self.state.get("embed_channel_id")
-            self.summary["embed"]["publish_token"] = redact_token(self.state.get("embed_publish_token"))
             return self.summary
 
         if (
@@ -749,21 +657,17 @@ class RCABootstrapper:
         kb_id = self._ensure_kb()
         mcp_id = self._ensure_mcp()
         agent_id = self._ensure_agent(kb_id, mcp_id)
-        channel_id, publish_token = self._ensure_embed_channel(agent_id)
+        self._retire_legacy_embed_channel()
         self.state.set_id("version", STATE_VERSION)
         self.state.set_id("knowledge_base_id", kb_id)
         self.state.set_id("mcp_service_id", mcp_id)
         self.state.set_id("agent_id", agent_id)
-        self.state.set_id("embed_channel_id", channel_id)
-        self.state.set_id("embed_publish_token", publish_token)
 
         self.summary["resource_ids"] = {
             "knowledge_base_id": kb_id,
             "mcp_service_id": mcp_id,
             "agent_id": agent_id,
-            "embed_channel_id": channel_id,
         }
-        self.summary["embed"]["publish_token"] = redact_token(publish_token)
         self.summary["status"] = "ok"
         self.summary["ops_mcp_tools"] = OPS_TOOLS
         return self.summary
@@ -779,21 +683,14 @@ def dry_run_summary(config: RCAConfig, state: BootstrapState) -> Dict[str, Any]:
             {"phase": "mcp", "endpoint": "/api/v1/mcp-services", "action": "get/create-by-name"},
             {"phase": "mcp_test", "endpoint": "/api/v1/mcp-services/{id}/test", "action": f"exact-match-tools {OPS_TOOLS}"},
             {"phase": "agent", "endpoint": "/api/v1/agents", "action": "get/create-by-name"},
-            {"phase": "embed", "endpoint": "/api/v1/agents/{id}/embed-channels", "action": "get/create-by-name"},
-            {"phase": "embed_rotate", "endpoint": "/api/v1/embed-channels/{id}/rotate-token", "action": "conditional"},
         ],
         "config": {
             "base_url": config.base_url,
             "kb": KB_NAME,
             "mcp_name": MCP_NAME,
             "agent_name": AGENT_NAME,
-            "embed_channel_name": EMBED_CHANNEL_NAME,
-            "steel_origin": config.steel_origin,
-            "embed_origin": config.embed_origin,
             "rerank_model_id": config.rerank_model_id,
             "state_file": str(config.state_file),
-            "state_has_token": bool(state.get("embed_publish_token")),
-            "state_publish_token": redact_token(state.get("embed_publish_token")),
         },
     }
 
@@ -806,10 +703,6 @@ def build_bootstrap_config(args: argparse.Namespace) -> Tuple[RCAConfig, str, st
     ops_key = read_secret(args.ops_mcp_key_file, args.ops_mcp_key_env)
     if not args.dry_run and not ops_key:
         raise RuntimeError("Ops MCP key missing: set --ops-mcp-key-file or OPS_MCP_API_KEY")
-    webhook_secret = read_file_secret(args.webhook_secret_file)
-    if not webhook_secret:
-        raise RuntimeError("Webhook secret missing: set --webhook-secret-file")
-
     return (
         RCAConfig(
             base_url=args.base_url.rstrip("/"),
@@ -818,11 +711,7 @@ def build_bootstrap_config(args: argparse.Namespace) -> Tuple[RCAConfig, str, st
             embedding_model_id=args.embedding_model_id,
             knowledge_dir=args.knowledge_dir,
             state_file=Path(args.state_file).expanduser(),
-            steel_origin=args.steel_origin,
-            embed_origin=args.embed_origin,
             ops_mcp_url=args.ops_mcp_url,
-            webhook_url=args.webhook_url,
-            webhook_secret=webhook_secret,
             dry_run=args.dry_run,
         ),
         workspace_key,
@@ -840,11 +729,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             embedding_model_id=args.embedding_model_id,
             knowledge_dir=args.knowledge_dir,
             state_file=Path(args.state_file).expanduser(),
-            steel_origin=args.steel_origin,
-            embed_origin=args.embed_origin,
             ops_mcp_url=args.ops_mcp_url,
-            webhook_url=args.webhook_url,
-            webhook_secret="",
             dry_run=True,
         )
         state = BootstrapState.load(config.state_file)

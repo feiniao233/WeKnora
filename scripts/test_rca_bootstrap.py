@@ -7,8 +7,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from rca_bootstrap import (  # noqa: E402
-    EMBED_AGENT_TOOLS,
+    AGENT_TOOLS,
     KB_INDEXING_STRATEGY,
+    LEGACY_EMBED_CHANNEL_NAME,
     OPS_TOOLS,
     RCAConfig,
     RCABootstrapper,
@@ -47,12 +48,8 @@ class FakeClient:
             return self.response(self.mcps)
         if parts == ["api", "v1", "agents"]:
             return self.response(self.agents)
-        if parts[:3] == ["api", "v1", "agents"] and parts[-1] == "embed-channels":
-            return self.response([row for row in self.channels if row["agent_id"] == parts[3]])
         if parts[:3] == ["api", "v1", "embed-channels"]:
-            # Real management GET intentionally never returns publish_token.
-            row = self.find(self.channels, parts[3])
-            return self.response({key: value for key, value in row.items() if key != "publish_token"})
+            return self.response(self.find(self.channels, parts[3]))
         raise AssertionError(f"unexpected GET {path}")
 
     def post_json(self, path, payload):
@@ -73,19 +70,6 @@ class FakeClient:
             row = {"id": self.new_id("agent"), **payload}
             self.agents.append(row)
             return self.response(row)
-        if parts[:3] == ["api", "v1", "agents"] and parts[-1] == "embed-channels":
-            row = {
-                "id": self.new_id("channel"),
-                "agent_id": parts[3],
-                "publish_token": "publish-secret",
-                **payload,
-            }
-            self.channels.append(row)
-            return self.response(row)
-        if parts[:3] == ["api", "v1", "embed-channels"] and parts[-1] == "rotate-token":
-            row = self.find(self.channels, parts[3])
-            row["publish_token"] = "rotated-secret"
-            return self.response({"publish_token": row["publish_token"]})
         raise AssertionError(f"unexpected POST {path}")
 
     def put_json(self, path, payload):
@@ -102,11 +86,15 @@ class FakeClient:
             row = self.find(self.agents, parts[3])
             row.update(payload)
             return self.response(row)
-        if parts[:3] == ["api", "v1", "embed-channels"]:
-            row = self.find(self.channels, parts[3])
-            row.update(payload)
-            return self.response(row)
         raise AssertionError(f"unexpected PUT {path}")
+
+    def delete_json(self, path):
+        self.calls.append(("DELETE", path, None))
+        parts = path.strip("/").split("/")
+        if parts[:3] == ["api", "v1", "embed-channels"]:
+            self.channels = [row for row in self.channels if row["id"] != parts[3]]
+            return self.response(None)
+        raise AssertionError(f"unexpected DELETE {path}")
 
     def post_multipart_file(self, path, file_path):
         self.calls.append(("FILE", path, file_path.name))
@@ -137,29 +125,32 @@ class BootstrapTest(unittest.TestCase):
             embedding_model_id="embedding-model",
             knowledge_dir=str(self.knowledge_dir),
             state_file=self.state_file,
-            steel_origin="https://172.16.20.230",
-            embed_origin="https://172.16.20.230:8443",
             ops_mcp_url="https://172.16.20.230/back/rca/mcp",
-            webhook_url="https://172.16.20.230/back/rca/assistant/webhook",
-            webhook_secret="webhook-secret",
         )
         runner = RCABootstrapper(config, "workspace-secret", "ops-secret", self.client)
         result = runner.run()
         runner.state.save(self.state_file)
         return result
 
-    def test_idempotent_contract_and_token_recovery(self):
+    def test_idempotent_contract(self):
+        self.client.channels.append({"id": "legacy-channel", "name": LEGACY_EMBED_CHANNEL_NAME})
+        self.state_file.write_text(
+            '{"embed_channel_id":"legacy-channel","embed_publish_token":"legacy-token"}',
+            encoding="utf-8",
+        )
         first = self.run_bootstrap()
         second = self.run_bootstrap()
 
-        for resource in ("knowledge_base_id", "mcp_service_id", "agent_id", "embed_channel_id"):
+        for resource in ("knowledge_base_id", "mcp_service_id", "agent_id"):
             self.assertEqual(first["resource_ids"][resource], second["resource_ids"][resource])
         self.assertEqual(len(self.client.kbs), 1)
         self.assertEqual(len(self.client.docs[first["resource_ids"]["knowledge_base_id"]]), 1)
         self.assertEqual(len(self.client.mcps), 1)
         self.assertEqual(len(self.client.agents), 1)
-        self.assertEqual(len(self.client.channels), 1)
+        self.assertEqual(self.client.channels, [])
         self.assertEqual(self.state_file.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn("embed_channel_id", self.state_file.read_text(encoding="utf-8"))
+        self.assertNotIn("embed_publish_token", self.state_file.read_text(encoding="utf-8"))
 
         kb_create = next(call for call in self.client.calls if call[:2] == ("POST", "/api/v1/knowledge-bases"))
         self.assertEqual(kb_create[2]["indexing_strategy"], KB_INDEXING_STRATEGY)
@@ -168,29 +159,13 @@ class BootstrapTest(unittest.TestCase):
         self.assertNotIn("api_key", mcp_create[2]["auth_config"])
         credential_calls = [call for call in self.client.calls if call[0] == "PUT" and call[1].endswith("/credentials")]
         self.assertEqual(credential_calls[-1][2], {"api_key": "ops-secret"})
-        self.assertEqual(self.client.agents[0]["config"]["allowed_tools"], EMBED_AGENT_TOOLS)
+        self.assertEqual(self.client.agents[0]["config"]["allowed_tools"], AGENT_TOOLS)
         self.assertIn("submit_rca_report", OPS_TOOLS)
         self.assertIn("submit_rca_report", self.client.agents[0]["config"]["system_prompt"])
         self.assertEqual(self.client.agents[0]["config"]["rerank_model_id"], "rerank-model")
-        self.assertEqual(self.client.channels[0]["webhook_secret"], "webhook-secret")
-        self.assertEqual(
-            self.client.channels[0]["allowed_origins"],
-            ["https://172.16.20.230", "https://172.16.20.230:8443"],
-        )
         agent_put_calls = [call for call in self.client.calls if call[0] == "PUT" and call[1].startswith("/api/v1/agents/")]
         self.assertTrue(agent_put_calls)
         self.assertEqual(agent_put_calls[-1][2]["config"]["rerank_model_id"], "rerank-model")
-        self.assertFalse(any(call[1].endswith("/rotate-token") for call in self.client.calls))
-
-        state = self.state_file.read_text(encoding="utf-8").replace(
-            '"embed_publish_token": "publish-secret"', '"embed_publish_token": ""'
-        )
-        self.state_file.write_text(state, encoding="utf-8")
-        self.state_file.chmod(0o600)
-        recovered = self.run_bootstrap()
-        rotations = [call for call in self.client.calls if call[1].endswith("/rotate-token")]
-        self.assertEqual(len(rotations), 1)
-        self.assertEqual(recovered["embed"]["publish_token"], "rota...cret")
 
     def test_empty_knowledge_directory_creates_resources_without_uploads(self):
         for item in self.knowledge_dir.iterdir():
@@ -198,6 +173,13 @@ class BootstrapTest(unittest.TestCase):
         result = self.run_bootstrap()
         self.assertEqual(result["status"], "ok")
         self.assertFalse(any(call[0] == "FILE" for call in self.client.calls))
+
+    def test_does_not_delete_unrelated_embed_channel(self):
+        self.client.channels.append({"id": "legacy-channel", "name": "Other channel"})
+        self.state_file.write_text('{"embed_channel_id":"legacy-channel"}', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "not created by RCA bootstrap"):
+            self.run_bootstrap()
+        self.assertEqual(len(self.client.channels), 1)
 
 
 if __name__ == "__main__":

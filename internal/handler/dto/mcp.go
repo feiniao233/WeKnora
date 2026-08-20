@@ -73,7 +73,7 @@ func NewMCPServiceResponse(ctx context.Context, svc *types.MCPService) *MCPServi
 	if svc == nil {
 		return nil
 	}
-	includeDetail := CanViewIntegrationSecrets(ctx)
+	includeDetail := CanManageMCPServices(ctx)
 	resp := &MCPServiceResponse{
 		ID:             svc.ID,
 		TenantID:       svc.TenantID,

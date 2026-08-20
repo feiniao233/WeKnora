@@ -31,6 +31,17 @@ func apiKeyCanManageIntegrationSecrets(ctx context.Context) bool {
 	return scope.HasCapability(types.APIKeyCapabilityManageTenantSettings)
 }
 
+// CanManageMCPServices permits MCP configuration detail for the same scoped
+// API keys that are allowed to manage those services, without granting the
+// broader manage_tenant_settings capability.
+func CanManageMCPServices(ctx context.Context) bool {
+	if CanViewIntegrationSecrets(ctx) {
+		return true
+	}
+	scope, ok := types.TenantAPIKeyScopeFromContext(ctx)
+	return ok && scope.HasCapability(types.APIKeyCapabilityManageMCPServices)
+}
+
 // RoleCanViewTenantAPIKey is true for Owner+ only.
 func RoleCanViewTenantAPIKey(role types.TenantRole) bool {
 	return role.HasPermission(types.TenantRoleOwner)

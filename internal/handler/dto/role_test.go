@@ -40,3 +40,15 @@ func TestCanViewIntegrationSecretsScopedAPIKeyWithoutCapabilityDenied(t *testing
 		t.Fatal("chat-only API key should not view integration secrets")
 	}
 }
+
+func TestCanManageMCPServicesScopedAPIKey(t *testing.T) {
+	ctx := types.WithTenantAPIKeyScope(context.Background(), types.TenantAPIKeyScope{
+		Capabilities: types.StringArray{string(types.APIKeyCapabilityManageMCPServices)},
+	})
+	if !CanManageMCPServices(ctx) {
+		t.Fatal("manage_mcp_services key should see MCP configuration detail")
+	}
+	if CanViewIntegrationSecrets(ctx) {
+		t.Fatal("manage_mcp_services must not grant unrelated integration detail")
+	}
+}

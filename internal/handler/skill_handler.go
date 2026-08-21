@@ -2,16 +2,14 @@ package handler
 
 import (
 	"net/http"
-	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 )
-
-var skillNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
 // SkillHandler handles skill-related HTTP requests
 type SkillHandler struct {
@@ -79,7 +77,7 @@ func (h *SkillHandler) ListSkills(c *gin.Context) {
 func (h *SkillHandler) GetSkill(c *gin.Context) {
 	ctx := c.Request.Context()
 	name := strings.TrimSpace(c.Param("name"))
-	if !skillNamePattern.MatchString(name) {
+	if !validSkillName(name) {
 		c.Error(errors.NewBadRequestError("Invalid skill name"))
 		return
 	}
@@ -96,4 +94,17 @@ func (h *SkillHandler) GetSkill(c *gin.Context) {
 			Instructions:      skill.Instructions,
 		},
 	})
+}
+
+func validSkillName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for _, r := range name {
+		if r == '-' || unicode.IsLetter(r) || unicode.IsNumber(r) {
+			continue
+		}
+		return false
+	}
+	return true
 }

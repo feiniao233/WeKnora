@@ -35,9 +35,17 @@ func TestGetSkill(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects path-like name", func(t *testing.T) {
+	t.Run("returns unicode skill", func(t *testing.T) {
 		response := httptest.NewRecorder()
-		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/skills/INVALID", nil))
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/skills/%E5%BC%95%E7%94%A8%E7%94%9F%E6%88%90%E5%99%A8", nil))
+		if response.Code != http.StatusOK || response.Body.String() == "" {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
+
+	t.Run("rejects dotted name", func(t *testing.T) {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/skills/with.dot", nil))
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 		}

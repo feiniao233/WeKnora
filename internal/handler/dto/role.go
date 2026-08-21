@@ -42,6 +42,17 @@ func CanManageMCPServices(ctx context.Context) bool {
 	return ok && scope.HasCapability(types.APIKeyCapabilityManageMCPServices)
 }
 
+// CanManageModels permits model configuration detail for the same scoped API
+// keys that are allowed to manage models, without granting unrelated
+// tenant-level integration detail.
+func CanManageModels(ctx context.Context) bool {
+	if CanViewIntegrationSecrets(ctx) {
+		return true
+	}
+	scope, ok := types.TenantAPIKeyScopeFromContext(ctx)
+	return ok && scope.HasCapability(types.APIKeyCapabilityManageModels)
+}
+
 // RoleCanViewTenantAPIKey is true for Owner+ only.
 func RoleCanViewTenantAPIKey(role types.TenantRole) bool {
 	return role.HasPermission(types.TenantRoleOwner)

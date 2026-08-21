@@ -72,7 +72,7 @@ func NewModelResponse(ctx context.Context, m *types.Model) *ModelResponse {
 		AppID:               m.Parameters.AppID,
 	}
 	canManageBuiltin := m.IsBuiltin && types.IsSystemAdminFromContext(ctx)
-	if !CanViewIntegrationSecrets(ctx) && !canManageBuiltin {
+	if !CanManageModels(ctx) && !canManageBuiltin {
 		params.ExtraConfig = nil
 		params.CustomHeaders = nil
 		params.BaseURL = ""

@@ -116,6 +116,36 @@ func TestModelResponse_ViewerStripsIntegrationDetail(t *testing.T) {
 	assert.Nil(t, resp.Parameters.ExtraConfig)
 }
 
+func TestModelResponse_ManageModelsAPIKeyCanViewTenantModelConfig(t *testing.T) {
+	ctx := types.WithTenantAPIKeyScope(context.Background(), types.TenantAPIKeyScope{
+		Capabilities: types.StringArray{string(types.APIKeyCapabilityManageModels)},
+	})
+	ctx = context.WithValue(ctx, types.TenantRoleContextKey, types.TenantRoleViewer)
+
+	m := &types.Model{
+		ID: "m-3",
+		Parameters: types.ModelParameters{
+			BaseURL:       "https://tenant-private.example.com",
+			CustomHeaders: map[string]string{"X-Route": "tenant"},
+			ExtraConfig:   map[string]string{"region": "cn-hangzhou"},
+			APIKey:        "should-not-leak",
+			AppSecret:     "also-should-not-leak",
+		},
+	}
+
+	resp := NewModelResponse(ctx, m)
+	assert.Equal(t, "https://tenant-private.example.com", resp.Parameters.BaseURL)
+	assert.Equal(t, map[string]string{"X-Route": "tenant"}, resp.Parameters.CustomHeaders)
+	assert.Equal(t, map[string]string{"region": "cn-hangzhou"}, resp.Parameters.ExtraConfig)
+	assert.True(t, resp.Credentials["api_key"].Configured)
+	assert.True(t, resp.Credentials["app_secret"].Configured)
+
+	body, err := json.Marshal(resp)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), "should-not-leak")
+	assert.NotContains(t, string(body), "also-should-not-leak")
+}
+
 func TestModelResponse_NilSafe(t *testing.T) {
 	assert.Nil(t, NewModelResponse(adminContext(), nil))
 	assert.Equal(t, []*ModelResponse{}, NewModelResponses(adminContext(), nil))

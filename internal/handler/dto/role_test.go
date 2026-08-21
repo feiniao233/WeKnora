@@ -52,3 +52,15 @@ func TestCanManageMCPServicesScopedAPIKey(t *testing.T) {
 		t.Fatal("manage_mcp_services must not grant unrelated integration detail")
 	}
 }
+
+func TestCanManageModelsScopedAPIKey(t *testing.T) {
+	ctx := types.WithTenantAPIKeyScope(context.Background(), types.TenantAPIKeyScope{
+		Capabilities: types.StringArray{string(types.APIKeyCapabilityManageModels)},
+	})
+	if !CanManageModels(ctx) {
+		t.Fatal("manage_models key should see model configuration detail")
+	}
+	if CanViewIntegrationSecrets(ctx) {
+		t.Fatal("manage_models must not grant unrelated integration detail")
+	}
+}

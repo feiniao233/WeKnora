@@ -9,7 +9,7 @@ Use this skill to investigate an alarm without changing devices, configurations,
 
 ## Evidence workflow
 
-1. Resolve the user-provided alarm with the `resolve_alarm` tool before treating its fields as facts.
+1. Resolve the user-provided alarm reference with the `resolve_alarm` tool before treating its fields as facts. Prefer the opaque `id` when the UI provides one; otherwise use the available alarm key fields.
 2. Read asset and topology context with `get_asset_context` and `get_topology_context`.
 3. Query time-bounded alarms, logs, and metrics with `query_operational_evidence`. Request only the evidence kinds needed for the current hypothesis.
 4. Read the matching diagnostic procedure from this Skill's `references/` directory.

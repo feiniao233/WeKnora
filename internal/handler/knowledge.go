@@ -1599,9 +1599,13 @@ func (h *KnowledgeHandler) PreviewKnowledgeFile(c *gin.Context) {
 		return
 	}
 
-	_, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
+	knowledge, effCtx, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleViewer)
 	if err != nil {
 		c.Error(err)
+		return
+	}
+	if !knowledge.IsManual() && strings.TrimSpace(knowledge.FilePath) == "" {
+		c.Error(errors.NewBadRequestError("Original file preview is unavailable for this knowledge entry"))
 		return
 	}
 

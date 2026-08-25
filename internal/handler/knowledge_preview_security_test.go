@@ -16,7 +16,9 @@ import (
 
 type previewKnowledgeServiceStub struct {
 	interfaces.KnowledgeService
-	filename string
+	filename         string
+	knowledge        *types.Knowledge
+	getFileCallCount int
 }
 
 type closeNotifyRecorder struct {
@@ -29,11 +31,41 @@ func (r *closeNotifyRecorder) CloseNotify() <-chan bool {
 }
 
 func (s *previewKnowledgeServiceStub) GetKnowledgeByIDOnly(context.Context, string) (*types.Knowledge, error) {
-	return &types.Knowledge{ID: "k1", TenantID: 42, KnowledgeBaseID: "kb1"}, nil
+	if s.knowledge != nil {
+		return s.knowledge, nil
+	}
+	return &types.Knowledge{ID: "k1", TenantID: 42, KnowledgeBaseID: "kb1", Type: "file", FilePath: "local://42/k1/file"}, nil
 }
 
 func (s *previewKnowledgeServiceStub) GetKnowledgeFile(context.Context, string) (io.ReadCloser, string, error) {
+	s.getFileCallCount++
 	return io.NopCloser(strings.NewReader(`<html><script>alert(1)</script></html>`)), s.filename, nil
+}
+
+func TestPreviewKnowledgeFileRejectsURLWithoutStoredFile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(middleware.ErrorHandler())
+	router.Use(func(c *gin.Context) {
+		c.Set(types.TenantIDContextKey.String(), uint64(42))
+		c.Next()
+	})
+
+	service := &previewKnowledgeServiceStub{knowledge: &types.Knowledge{
+		ID: "k1", TenantID: 42, KnowledgeBaseID: "kb1", Type: "url", Source: "https://example.com/manual",
+	}}
+	router.GET("/knowledge/:id/preview", (&KnowledgeHandler{kgService: service}).PreviewKnowledgeFile)
+
+	req := httptest.NewRequest(http.MethodGet, "/knowledge/k1/preview", nil)
+	w := &closeNotifyRecorder{ResponseRecorder: httptest.NewRecorder()}
+	router.ServeHTTP(w, req)
+
+	if got, want := w.Code, http.StatusBadRequest; got != want {
+		t.Fatalf("status = %d, want %d; body=%s", got, want, w.Body.String())
+	}
+	if service.getFileCallCount != 0 {
+		t.Fatalf("GetKnowledgeFile calls = %d, want 0", service.getFileCallCount)
+	}
 }
 
 func TestPreviewKnowledgeFileForcesActiveContentDownload(t *testing.T) {

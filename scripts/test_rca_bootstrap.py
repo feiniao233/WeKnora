@@ -7,9 +7,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from rca_bootstrap import (  # noqa: E402
+    AGENT_NAME,
     AGENT_TOOLS,
     KB_INDEXING_STRATEGY,
+    KB_NAME,
+    LEGACY_AGENT_NAME,
     LEGACY_EMBED_CHANNEL_NAME,
+    LEGACY_KB_NAME,
     OPS_TOOLS,
     RCAConfig,
     RCABootstrapper,
@@ -80,6 +84,10 @@ class FakeClient:
             if parts[-1] == "credentials":
                 row["credentials_configured"] = bool(payload.get("api_key"))
                 return self.response({"fields": {"api_key": {"configured": True}}})
+            row.update(payload)
+            return self.response(row)
+        if parts[:3] == ["api", "v1", "knowledge-bases"]:
+            row = self.find(self.kbs, parts[3])
             row.update(payload)
             return self.response(row)
         if parts[:3] == ["api", "v1", "agents"]:
@@ -173,6 +181,18 @@ class BootstrapTest(unittest.TestCase):
         result = self.run_bootstrap()
         self.assertEqual(result["status"], "ok")
         self.assertFalse(any(call[0] == "FILE" for call in self.client.calls))
+
+    def test_renames_legacy_resources_without_creating_duplicates(self):
+        self.client.kbs.append({"id": "kb-legacy", "name": LEGACY_KB_NAME, "category": "general"})
+        self.client.docs["kb-legacy"] = []
+        self.client.agents.append({"id": "agent-legacy", "name": LEGACY_AGENT_NAME})
+
+        self.run_bootstrap()
+
+        self.assertEqual(len(self.client.kbs), 1)
+        self.assertEqual(self.client.kbs[0]["name"], KB_NAME)
+        self.assertEqual(len(self.client.agents), 1)
+        self.assertEqual(self.client.agents[0]["name"], AGENT_NAME)
 
     def test_does_not_delete_unrelated_embed_channel(self):
         self.client.channels.append({"id": "legacy-channel", "name": "Other channel"})

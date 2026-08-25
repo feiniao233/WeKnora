@@ -26,9 +26,11 @@ DEFAULT_KNOWLEDGE_DIR = "/root/code/work/rca-app/docs/knowledge"
 DEFAULT_STATE_FILE = "/root/.local/share/weknora/rca-bootstrap.json"
 DEFAULT_MCP_URL = "https://172.16.20.230/back/rca/mcp"
 
-KB_NAME = "RCA 运维知识库"
+KB_NAME = "根因分析运维知识库"
+LEGACY_KB_NAME = "RCA 运维知识库"
 MCP_NAME = "Steel Ops MCP (只读)"
-AGENT_NAME = "RCA 诊断助手"
+AGENT_NAME = "根因分析助手"
+LEGACY_AGENT_NAME = "RCA 诊断助手"
 LEGACY_EMBED_CHANNEL_NAME = "Steel RCA 助手"
 AGENT_TOOLS = [
     "thinking",
@@ -440,9 +442,13 @@ class RCABootstrapper:
 
         self._record("knowledge_base", endpoint="/api/v1/knowledge-bases", action="ensure")
         rows = as_list(self._get("/api/v1/knowledge-bases"))
-        found = self._find_by_name(rows, KB_NAME)
+        found = self._find_by_name(rows, KB_NAME) or self._find_by_name(rows, LEGACY_KB_NAME)
         if found:
             kb_id = str(found["id"])
+            self._put(
+                f"/api/v1/knowledge-bases/{urllib.parse.quote(kb_id, safe='')}",
+                {"name": KB_NAME, "description": "根因分析运维知识库（预置）"},
+            )
             self._record(
                 "knowledge_base",
                 action="reused",
@@ -455,7 +461,7 @@ class RCABootstrapper:
                     "/api/v1/knowledge-bases",
                     {
                         "name": KB_NAME,
-                        "description": "RCA 运维知识库（预置）",
+                        "description": "根因分析运维知识库（预置）",
                         "type": "document",
                         "category": "general",
                         "embedding_model_id": self.config.embedding_model_id,
@@ -564,15 +570,15 @@ class RCABootstrapper:
     def _agent_payload(self, kb_id: str, mcp_id: str) -> Dict[str, Any]:
         return {
             "name": AGENT_NAME,
-            "description": "RCA 运维诊断智能体",
+            "description": "根因分析运维诊断智能体",
             "avatar": "",
             "config": {
                 "agent_mode": "smart-reasoning",
                 "agent_type": "custom",
                 "system_prompt": (
-                    "你是 RCA 运维诊断助手。仅基于知识库内容与 MCP 证据工具给出可核验证据链结论。"
+                    "你是根因分析运维诊断助手。仅基于知识库内容与 MCP 证据工具给出可核验证据链结论。"
                     "resolve_alarm, get_asset_context, get_topology_context, query_operational_evidence 均为只读工具。"
-                    "仅当一次真实 RCA 已按流程完成并形成最终 Markdown 报告时，调用 submit_rca_report 提交同一份报告；"
+                    "仅当一次真实根因分析已按流程完成并形成最终中文 Markdown 报告时，调用 submit_rca_report 提交同一份报告；"
                     "问候、闲聊、普通问答、缺少权威告警或证据不足时禁止调用。"
                     "禁止执行或声称已经执行处置；验证与处置建议必须明确交由人工执行。"
                 ),
@@ -606,7 +612,7 @@ class RCABootstrapper:
         payload = self._agent_payload(kb_id, mcp_id)
         self._record("agent", endpoint="/api/v1/agents", action="ensure")
         rows = as_list(self._get("/api/v1/agents"))
-        found = self._find_by_name(rows, AGENT_NAME)
+        found = self._find_by_name(rows, AGENT_NAME) or self._find_by_name(rows, LEGACY_AGENT_NAME)
         if found:
             agent_id = str(found["id"])
             self._put(f"/api/v1/agents/{urllib.parse.quote(agent_id, safe='')}", payload)

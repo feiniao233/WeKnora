@@ -658,6 +658,17 @@ func (e *AgentEngine) runReActIteration(
 	// 3. Act: Execute tool calls
 	e.executeToolCalls(ctx, response, &step, state.CurrentRound, sessionID, assistantMessageID)
 	toolCallCount = len(step.ToolCalls)
+	newKnowledgeRefs := collectKnowledgeReferences(state, step.ToolCalls)
+	if len(newKnowledgeRefs) > 0 {
+		e.eventBus.Emit(ctx, event.Event{
+			Type:      event.EventAgentReferences,
+			SessionID: sessionID,
+			Data: event.AgentReferencesData{
+				References: newKnowledgeRefs,
+				Iteration:  state.CurrentRound,
+			},
+		})
+	}
 
 	// 4. Observe: Add tool results to messages and write to context
 	state.RoundSteps = append(state.RoundSteps, step)
@@ -670,6 +681,34 @@ func (e *AgentEngine) runReActIteration(
 	})
 
 	return iterOutcomeNext, nil
+}
+
+func collectKnowledgeReferences(state *types.AgentState, toolCalls []types.ToolCall) []*types.SearchResult {
+	seen := make(map[string]struct{}, len(state.KnowledgeRefs))
+	for _, ref := range state.KnowledgeRefs {
+		if ref != nil {
+			seen[ref.ID] = struct{}{}
+		}
+	}
+
+	var added []*types.SearchResult
+	for _, toolCall := range toolCalls {
+		if toolCall.Result == nil {
+			continue
+		}
+		for _, ref := range toolCall.Result.KnowledgeReferences {
+			if ref == nil {
+				continue
+			}
+			if _, exists := seen[ref.ID]; exists {
+				continue
+			}
+			seen[ref.ID] = struct{}{}
+			state.KnowledgeRefs = append(state.KnowledgeRefs, ref)
+			added = append(added, ref)
+		}
+	}
+	return added
 }
 
 // String returns a stable label for Langfuse output payloads.

@@ -398,6 +398,12 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 		logger.Errorf(ctx, "[Tool][KnowledgeSearch] Failed to format output: %v", err)
 		return result, err
 	}
+	result.KnowledgeReferences = make([]*types.SearchResult, 0, len(deduplicatedResults))
+	for _, searchResult := range deduplicatedResults {
+		if searchResult != nil && searchResult.SearchResult != nil {
+			result.KnowledgeReferences = append(result.KnowledgeReferences, searchResult.SearchResult)
+		}
+	}
 	logger.Infof(ctx, "[Tool][KnowledgeSearch] Output: %s", result.Output)
 	return result, nil
 }

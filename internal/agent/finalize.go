@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
@@ -172,9 +173,27 @@ func (e *AgentEngine) handleMaxIterations(
 		common.PipelineError(ctx, "Agent", "final_answer_failed", map[string]interface{}{
 			"error": err.Error(),
 		})
-		state.FinalAnswer = "Sorry, I was unable to generate a complete answer."
+		state.FinalAnswer = maxIterationsFallback(state)
 	}
 	state.IsComplete = true
+}
+
+func maxIterationsFallback(state *types.AgentState) string {
+	for i := len(state.RoundSteps) - 1; i >= 0; i-- {
+		toolCalls := state.RoundSteps[i].ToolCalls
+		for j := len(toolCalls) - 1; j >= 0; j-- {
+			toolCall := toolCalls[j]
+			if toolCall.Result == nil || !toolCall.Result.Success ||
+				(toolCall.Name != "submit_rca_report" && !strings.HasSuffix(toolCall.Name, "__submit_rca_report")) {
+				continue
+			}
+			report, ok := toolCall.Args["report"].(string)
+			if ok && strings.TrimSpace(report) != "" {
+				return report
+			}
+		}
+	}
+	return "抱歉，暂时无法生成完整分析结果，请稍后重试。"
 }
 
 // emitCompletionEvent emits the EventAgentComplete event with execution summary.

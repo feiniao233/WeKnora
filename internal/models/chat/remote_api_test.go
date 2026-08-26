@@ -164,6 +164,8 @@ func TestBuildChatCompletionRequest_GPT5MaxCompletionTokens(t *testing.T) {
 		{"OpenAI o1-mini", "openai", "o1-mini", true},
 		{"OpenAI o3", "openai", "o3", true},
 		{"OpenAI o4-mini", "openai", "o4-mini", true},
+		{"Generic GPT-5 compatible", "generic", "gpt-5.6-luna", true},
+		{"Generic ordinary model unchanged", "generic", "qwen3-32b", false},
 		{"OpenAI gpt-4o (unchanged)", "openai", "gpt-4o", false},
 		{"AzureOpenAI gpt-4 (unchanged)", "azure_openai", "gpt-4", false},
 	}

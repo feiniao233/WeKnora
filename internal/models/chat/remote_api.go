@@ -124,6 +124,9 @@ func (c *RemoteAPIChat) shapedRequest(messages []Message, opts *ChatOptions, isS
 	req := c.BuildChatCompletionRequest(messages, opts, isStream)
 	req.Messages = c.adapter.TransformMessages(req.Messages)
 	c.adapter.ShapeRequest(&req, opts, isStream)
+	if provider.IsOpenAIReasoningOrGPT5Model(c.modelName) {
+		shapeOpenAIReasoning(&req)
+	}
 	return req
 }
 

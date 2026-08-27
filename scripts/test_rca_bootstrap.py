@@ -206,6 +206,17 @@ class BootstrapTest(unittest.TestCase):
         self.assertIn("IP 地址配置新增、删除或地址列表变化 -> `ip-conflict`", skill)
         self.assertIn("只表示选择 IP 冲突核验流程，不代表已确认存在地址冲突", skill)
 
+    def test_registered_peer_ip_is_ip_conflict_scene_match(self):
+        reference = (
+            Path(__file__).parents[1] / "skills/preloaded/rca-diagnosis/references/ip-conflict.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("配置变更新增地址与另一资产登记地址重复", reference)
+        self.assertIn("结论等级为 `场景匹配`", reference)
+        self.assertIn("不得因缺少动态重叠声明降为 `未知`", reference)
+        self.assertIn("不等于人工确认两台设备同时在线使用", reference)
+        self.assertIn("无候选资产时，结论为 `未知`", reference)
+        self.assertIn("多个候选资产或重新分配证据相互矛盾时，结论为 `存在歧义`", reference)
+
 
 if __name__ == "__main__":
     unittest.main()

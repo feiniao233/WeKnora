@@ -201,6 +201,11 @@ class BootstrapTest(unittest.TestCase):
             self.run_bootstrap()
         self.assertEqual(len(self.client.channels), 1)
 
+    def test_ip_configuration_change_routes_to_conflict_verification(self):
+        skill = (Path(__file__).parents[1] / "skills/preloaded/rca-diagnosis/SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("IP 地址配置新增、删除或地址列表变化 -> `ip-conflict`", skill)
+        self.assertIn("只表示选择 IP 冲突核验流程，不代表已确认存在地址冲突", skill)
+
 
 if __name__ == "__main__":
     unittest.main()

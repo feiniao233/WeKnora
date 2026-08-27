@@ -29,8 +29,11 @@ description: 基于权威只读证据分析运维告警及疑似根因。适用�
 
 - 接口或端口从 up 变为 down -> `network-interface-down`
 - 地址重复或 IP 归属冲突 -> `ip-conflict`
+- 权威告警内容显示 IP 地址配置新增、删除或地址列表变化 -> `ip-conflict`
 - 流量持续接近接口容量 -> `bandwidth-congestion`
 - 以上均不符合 -> `generic`
+
+IP 地址配置变化命中 `ip-conflict` 时，只表示选择 IP 冲突核验流程，不代表已确认存在地址冲突。
 
 厂商特定的告警名称只能作为辅助信号。如果加载诊断流程前仍有多个试点场景可能成立，应使用 `generic`，不得强行匹配其中一个。
 

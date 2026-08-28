@@ -1,0 +1,286 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Steel 智能助手跨仓库运行架构",
+    "output": "steel-ai-platform.html",
+    "quality_profile": "showcase",
+    "viewBox": [1500, 760],
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "frontend": { "label": "用户界面" },
+        "backend": { "label": "后端服务" },
+        "database": { "label": "数据存储" },
+        "cloud": { "label": "基础设施" },
+        "security": { "label": "安全边界" },
+        "external": { "label": "外部参与者" }
+      }
+    },
+    "views": [
+      {
+        "id": "assistant-path",
+        "label": "助手主链路",
+        "focus": ["user", "steel", "mcp_app", "tunnel", "weknora", "llmapi"],
+        "note": "从 Steel 页面进入 mcp-app，再经反向隧道访问 WeKnora 与 LLMAPI。"
+      },
+      {
+        "id": "evidence-loop",
+        "label": "RCA 证据闭环",
+        "focus": ["weknora", "mcp_app", "industrial_data", "weknora_postgres"],
+        "note": "WeKnora Agent 调用五个受限 MCP 工具读取证据并提交待确认报告。"
+      },
+      {
+        "id": "legacy-path",
+        "label": "遗留链路",
+        "focus": ["steel", "rca_app", "industrial_data"],
+        "note": "未迁移的 /back/rca/* 请求仍进入 rca-app，新能力不再落入该层。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "运维用户",
+      "sublabel": "桌面浏览器",
+      "pos": [30, 300],
+      "size": [130, 64]
+    },
+    {
+      "id": "steel",
+      "type": "frontend",
+      "label": "Steel",
+      "sublabel": "Vue 3 SPA + Nginx",
+      "tag": "统一用户入口",
+      "pos": [230, 300],
+      "size": [170, 72]
+    },
+    {
+      "id": "steel_redis",
+      "type": "database",
+      "label": "Steel Redis",
+      "sublabel": "登录会话 · DB 0",
+      "pos": [470, 90],
+      "size": [170, 68]
+    },
+    {
+      "id": "mcp_app",
+      "type": "security",
+      "label": "mcp-app",
+      "sublabel": "BFF + MCP + 输入校验",
+      "tag": "127.0.0.1:8930",
+      "pos": [470, 300],
+      "size": [190, 76]
+    },
+    {
+      "id": "rca_app",
+      "type": "backend",
+      "label": "rca-app",
+      "sublabel": "旧 RCA / 知识库集成层",
+      "tag": "待退出",
+      "pos": [230, 530],
+      "size": [180, 72]
+    },
+    {
+      "id": "industrial_data",
+      "type": "database",
+      "label": "工业数据源",
+      "sublabel": "MySQL · ClickHouse",
+      "tag": "告警 / 资产 / 拓扑 / 日志 / 指标",
+      "pos": [500, 530],
+      "size": [210, 76]
+    },
+    {
+      "id": "tunnel",
+      "type": "security",
+      "label": "反向 SSH 隧道",
+      "sublabel": "18080 → WeKnora · 18317 → LLMAPI",
+      "pos": [760, 300],
+      "size": [220, 76]
+    },
+    {
+      "id": "weknora",
+      "type": "backend",
+      "label": "WeKnora",
+      "sublabel": "知识库 · 检索 · Agent",
+      "tag": "Docker Compose",
+      "pos": [1050, 300],
+      "size": [190, 76]
+    },
+    {
+      "id": "llmapi",
+      "type": "external",
+      "label": "LLMAPI",
+      "sublabel": "模型推理入口 :8317",
+      "pos": [1320, 90],
+      "size": [150, 68]
+    },
+    {
+      "id": "weknora_postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "元数据 + pgvector",
+      "pos": [1320, 270],
+      "size": [150, 68]
+    },
+    {
+      "id": "weknora_minio",
+      "type": "cloud",
+      "label": "MinIO",
+      "sublabel": "原始文档与资源",
+      "pos": [1320, 430],
+      "size": [150, 68]
+    },
+    {
+      "id": "weknora_runtime",
+      "type": "backend",
+      "label": "处理运行时",
+      "sublabel": "Docreader + Skill Sandbox",
+      "pos": [1030, 560],
+      "size": [210, 72]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "目标机 172.16.20.230",
+      "wraps": ["steel", "steel_redis", "mcp_app", "rca_app", "industrial_data"],
+      "pad": 28
+    },
+    {
+      "kind": "region",
+      "label": "开发宿主",
+      "wraps": ["tunnel", "weknora", "llmapi", "weknora_postgres", "weknora_minio", "weknora_runtime"],
+      "pad": 28
+    }
+  ],
+  "connections": [
+    {
+      "id": "user_to_steel",
+      "from": "user",
+      "to": "steel",
+      "label": "HTTPS · 桌面 UI",
+      "variant": "emphasis",
+      "labelAt": [195, 286]
+    },
+    {
+      "id": "steel_to_mcp",
+      "from": "steel",
+      "to": "mcp_app",
+      "label": "/back/rca/ai/* · SSE",
+      "variant": "emphasis",
+      "labelAt": [435, 286]
+    },
+    {
+      "id": "steel_to_legacy",
+      "from": "steel",
+      "to": "rca_app",
+      "label": "其他 /back/rca/*",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "mcp_to_session",
+      "from": "mcp_app",
+      "to": "steel_redis",
+      "label": "校验 token:*",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "mcp_to_tunnel",
+      "from": "mcp_app",
+      "to": "tunnel",
+      "label": "127.0.0.1:18080",
+      "variant": "security"
+    },
+    {
+      "id": "tunnel_to_weknora",
+      "from": "tunnel",
+      "to": "weknora",
+      "label": "HTTP /api/v1",
+      "variant": "security"
+    },
+    {
+      "id": "weknora_to_mcp",
+      "from": "weknora",
+      "to": "mcp_app",
+      "label": "HTTPS MCP · 5 个工具",
+      "variant": "emphasis",
+      "fromSide": "left",
+      "toSide": "right",
+      "via": [[1010, 338], [1010, 680], [730, 680], [730, 400], [700, 400], [700, 338]]
+    },
+    {
+      "id": "mcp_to_industrial",
+      "from": "mcp_app",
+      "to": "industrial_data",
+      "label": "受限证据查询 / 报告待确认",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "legacy_to_industrial",
+      "from": "rca_app",
+      "to": "industrial_data",
+      "label": "旧 RCA 与知识数据",
+      "variant": "dashed"
+    },
+    {
+      "id": "weknora_to_llm",
+      "from": "weknora",
+      "to": "llmapi",
+      "label": "推理 / Embedding"
+    },
+    {
+      "id": "weknora_to_postgres",
+      "from": "weknora",
+      "to": "weknora_postgres",
+      "label": "元数据 / 向量索引",
+      "labelAt": [1360, 240]
+    },
+    {
+      "id": "weknora_to_minio",
+      "from": "weknora",
+      "to": "weknora_minio",
+      "label": "对象读写"
+    },
+    {
+      "id": "weknora_to_runtime",
+      "from": "weknora",
+      "to": "weknora_runtime",
+      "label": "文档解析 / Skill 执行",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "主访问路径",
+      "items": [
+        "最终用户只访问 Steel，浏览器不持有 WeKnora、LLM 或数据库密钥",
+        "mcp-app 以 Steel 会话映射 X-External-User-ID，并转发 JSON 与 SSE"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "RCA 证据闭环",
+      "items": [
+        "WeKnora Agent 组合知识检索与五个封闭世界 MCP 工具",
+        "报告提交仅进入待人工确认状态，不执行设备变更"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "迁移边界",
+      "items": [
+        "rca-app 仅保留未迁移旧链路，不再承载新的 RCA、SOP 或 Agent 能力",
+        "知识目录只影响管理与筛选，不改变物理文件或默认跨目录检索"
+      ]
+    }
+  ]
+}

@@ -178,10 +178,10 @@
                     <div class="results-summary-text" v-html="getAttachmentParsingSummary(event)"></div>
                   </div>
 
-                  <div v-if="isEventExpanded(event.tool_call_id) && !event.pending && hasExpandableResults(event)"
+                    <div v-if="isEventExpanded(event.tool_call_id) && !event.pending && hasExpandableResults(event)"
                     class="action-details">
-                    <div v-if="event.display_type && event.tool_data" class="tool-result-wrapper">
-                      <ToolResultRenderer :display-type="event.display_type" :tool-data="event.tool_data"
+                    <div v-if="resolveToolDisplayType(event)" class="tool-result-wrapper">
+                      <ToolResultRenderer :display-type="resolveToolDisplayType(event)" :tool-data="event.tool_data"
                         :output="event.output" :arguments="event.arguments" />
                     </div>
                     <div v-else-if="event.output" class="tool-output-wrapper">
@@ -340,19 +340,17 @@
                      assistant message recorded any generated files. Agent
                      mode is the primary path for skills, so this is where
                      the button is most likely to appear. -->
-                <t-badge
-                  v-if="hasArtifacts"
-                  :count="artifactCount"
-                  :offset="[-4, 4]"
-                  shape="round"
-                  size="small"
-                >
+                <span v-if="hasArtifacts || artifactsCollecting" class="answer-toolbar__artifact"
+                  :class="{ 'is-collecting': artifactButtonCollecting }">
                   <t-button size="small" variant="outline" shape="round"
-                    @click.stop="openArtifactDrawer"
-                    :title="$t('agent.artifactDrawer.buttonTitle')">
-                    <t-icon name="download" />
+                    :disabled="artifactButtonCollecting"
+                    :title="hasArtifacts ? $t('agent.artifactDrawer.buttonTitle') : $t('agent.artifactDrawer.collecting')"
+                    @click.stop="openArtifactDrawer()">
+                    <t-icon v-if="artifactButtonCollecting" name="loading" class="answer-toolbar__artifact-spinner" />
+                    <t-icon v-else name="folder" />
                   </t-button>
-                </t-badge>
+                  <span v-if="hasArtifacts" class="answer-toolbar__artifact-count" aria-hidden="true">{{ artifactCount }}</span>
+                </span>
                 <t-tooltip v-if="event.is_fallback" :content="$t('chat.fallbackHint')" placement="top">
                   <t-button size="small" variant="outline" shape="round" class="fallback-icon-btn">
                     <t-icon name="info-circle" />
@@ -440,8 +438,8 @@
 
                 <div v-if="isEventExpanded(event.tool_call_id) && !event.pending && hasExpandableResults(event)"
                   class="action-details">
-                  <div v-if="event.display_type && event.tool_data" class="tool-result-wrapper">
-                    <ToolResultRenderer :display-type="event.display_type" :tool-data="event.tool_data"
+                  <div v-if="resolveToolDisplayType(event)" class="tool-result-wrapper">
+                    <ToolResultRenderer :display-type="resolveToolDisplayType(event)" :tool-data="event.tool_data"
                       :output="event.output" :arguments="event.arguments" />
                   </div>
 
@@ -528,6 +526,7 @@
     :embed-token="embedToken"
     :embed-session-sig="embedSessionSig"
     :embed-visitor-id="embedVisitorId"
+    :preview-index="artifactPreviewIndex"
   />
 </template>
 
@@ -543,6 +542,7 @@ import ChatRequestInfoButton from '@/components/ChatRequestInfoButton.vue';
 import ChatCitationFloat from '@/components/ChatCitationFloat.vue';
 import picturePreview from '@/components/picture-preview.vue';
 import ChatArtifactsDrawer from './ChatArtifactsDrawer.vue';
+import { isCollectingSkillArtifacts } from '@/utils/skillArtifacts';
 import ChatMemoryStep from './ChatMemoryStep.vue';
 import { useChatMemoryRow, type UsedMemory } from '@/composables/useChatMemoryRow';
 import { countGrepDocuments, groupGrepChunkResults } from '@/utils/grepResultsGroup';
@@ -560,10 +560,24 @@ import { useAuthStore } from '@/stores/auth';
 import { useI18n } from 'vue-i18n';
 import i18n from '@/i18n';
 import { hydrateProtectedFileImages, clearProtectedFileFailureCache, sanitizeMarkdownHTML } from '@/utils/security';
+import {
+  artifactIndexFromEventTarget,
+  hydrateArtifactImages,
+  renderArtifactReference,
+} from '@/utils/sandboxArtifactRefs';
 import type { ProtectedFileAccessContext } from '@/utils/protectedFileAccess';
 import { unwrapFinalAnswerWrappers, thinkingEqualsAnswer } from '@/utils/finalAnswer';
 import { getAgentToolIconName } from '@/utils/agent-tool-icons';
 import { getQueryText, getWikiPageText } from '@/utils/agent-tool-display';
+import {
+  formatToolTitleWithDetail,
+  getEventSkillName,
+  getReadSkillTarget,
+  getSandboxToolPath,
+  skillScriptTitleCommand,
+} from '@/utils/skillToolDisplay';
+import { previewShellCommand } from '@/utils/shellExecResult';
+import type { DisplayType } from '@/types/tool-results';
 import { parseWikiToolReferences } from '@/utils/wikiToolReferences';
 import {
   buildManualMarkdown,
@@ -629,6 +643,9 @@ const TOOL_NAME_KEYS: Record<string, string> = {
   query_knowledge_graph: 'agentStream.tools.queryKnowledgeGraph',
   read_skill: 'agentStream.tools.readSkill',
   execute_skill_script: 'agentStream.tools.executeSkillScript',
+  list_sandbox_files: 'agentStream.tools.listSandboxFiles',
+  read_sandbox_file: 'agentStream.tools.readSandboxFile',
+  shell_exec: 'agentStream.tools.shellExec',
   data_analysis: 'agentStream.tools.dataAnalysis',
   data_schema: 'agentStream.tools.dataSchema',
   database_query: 'agentStream.tools.databaseQuery',
@@ -933,14 +950,32 @@ const artifactList = computed(() => {
 });
 const hasArtifacts = computed(() => artifactList.value.length > 0);
 const artifactCount = computed(() => artifactList.value.length);
+const artifactsCollecting = computed(() => isCollectingSkillArtifacts(props.session as any));
+const artifactButtonCollecting = computed(() => artifactsCollecting.value && !hasArtifacts.value);
 const sessionIdForArtifacts = computed(() => props.sessionId ?? '');
 const messageIdForArtifacts = computed(() =>
   String(props.session?.id || props.session?.request_id || ''),
 );
-function openArtifactDrawer() {
+// Set when the drawer is opened from an inline artifact card in the answer, so
+// it lands on that file's preview instead of the list.
+const artifactPreviewIndex = ref<number | null>(null);
+function openArtifactDrawer(previewIndex: number | null = null) {
   if (!hasArtifacts.value) return;
+  artifactPreviewIndex.value = previewIndex;
   showArtifactDrawer.value = true;
 }
+
+const artifactRefContext = computed(() => {
+  const sessionId = sessionIdForArtifacts.value;
+  const messageId = messageIdForArtifacts.value;
+  if (!sessionId || !messageId) return null;
+  return { sessionId, messageId };
+});
+
+const artifactRefLabels = computed(() => ({
+  previewHint: t('agent.artifactDrawer.inlinePreviewHint'),
+  missingHint: t('agent.artifactDrawer.inlineMissing'),
+}));
 
 const {
   float: citationFloat,
@@ -1047,6 +1082,20 @@ const formatToolResultContent = (value: unknown): string => {
 };
 
 const isMcpTool = (toolName?: string | null): boolean => String(toolName || '').startsWith('mcp_');
+
+const resolveToolDisplayType = (event: any): DisplayType | undefined => {
+  if (event?.display_type) return event.display_type as DisplayType
+  if (event?.tool_name === 'shell_exec' || event?.tool_name === 'execute_skill_script') {
+    return 'shell_exec'
+  }
+  if (event?.tool_name === 'list_sandbox_files' && event?.success !== false) {
+    return 'list_sandbox_files'
+  }
+  if (event?.tool_name === 'read_skill' && event?.success !== false) {
+    return 'read_skill'
+  }
+  return undefined
+};
 
 const WIKI_EDIT_TOOL_NAMES = new Set([
   'wiki_write_page',
@@ -2171,6 +2220,15 @@ const onRootClick = (e: Event) => {
   const target = e.target as HTMLElement;
   if (!target) return;
 
+  // Inline artifact card -> open the drawer straight on that file's preview.
+  const artifactIndex = artifactIndexFromEventTarget(target);
+  if (artifactIndex !== null) {
+    e.preventDefault();
+    e.stopPropagation();
+    openArtifactDrawer(artifactIndex);
+    return;
+  }
+
   // Handle image clicks -> open preview (only for images inside markdown/answer content, not icons)
   if (target.tagName === 'IMG') {
     const imgEl = target as HTMLImageElement;
@@ -2259,6 +2317,15 @@ const onRootKeydown = (e: KeyboardEvent) => {
   const target = e.target as HTMLElement;
   if (!target) return;
 
+  const artifactIndex = artifactIndexFromEventTarget(target);
+  if (artifactIndex !== null) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openArtifactDrawer(artifactIndex);
+    }
+    return;
+  }
+
   // Handle web citation keyboard
   const webEl = target.closest?.('.citation-web') as HTMLElement | null;
   if (webEl) {
@@ -2330,6 +2397,7 @@ onMounted(() => {
     root.addEventListener('keydown', keydownListener, true);
     rebindCitations();
     await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+    await hydrateArtifactImages(rootElement.value, artifactRefContext.value);
   });
 });
 
@@ -2354,12 +2422,32 @@ onUpdated(() => {
     // de-duped, and failures back off for a cooldown — so a not-yet-ready file
     // simply retries later (and the answerFullyRendered pass is the backstop).
     await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+    await hydrateArtifactImages(rootElement.value, artifactRefContext.value);
   });
 });
 
 // 自定义渲染器 - 支持 Mermaid
 const agentRenderer = new marked.Renderer();
 agentRenderer.code = createMermaidCodeRenderer('mermaid-agent');
+
+// Files the agent generated in its sandbox carry the same `resource://` handle
+// as any other stored file, so they are matched against this reply's artifacts
+// before marked's default <img>. Everything else — including a handle that
+// belongs to a knowledge-base image rather than to this reply — keeps the
+// default output, which protectProviderImageSrcInHTML still rewrites.
+const defaultImageRenderer = new marked.Renderer().image;
+agentRenderer.image = function agentImageRenderer(token) {
+  const artifactHtml = renderArtifactReference({
+    href: token.href || '',
+    alt: token.text || '',
+    artifacts: artifactList.value,
+    labels: artifactRefLabels.value,
+    context: artifactRefContext.value,
+    streaming: !isConversationDone.value,
+  });
+  if (artifactHtml !== null) return artifactHtml;
+  return defaultImageRenderer.call(this, token);
+};
 
 const prepareAgentMarkdown = (markdown: string, cachedSvgHtml?: string | null): string => {
   const mermaidSafe = !isConversationDone.value
@@ -2610,6 +2698,21 @@ const getToolTitle = (event: any): string => {
     if (event.tool_name === 'wiki_search' || event.tool_name === 'wiki_read_page') {
       return `${getLocalizedToolName(event.tool_name)}...`;
     }
+    if (event.tool_name === 'read_skill') {
+      const name = getLocalizedToolName(event.tool_name);
+      return `${formatToolTitleWithDetail(name, getReadSkillTarget(event))}...`;
+    }
+    if (event.tool_name === 'execute_skill_script') {
+      const name = getLocalizedToolName(event.tool_name);
+      return `${formatToolTitleWithDetail(name, getEventSkillName(event))}...`;
+    }
+    if (event.tool_name === 'list_sandbox_files' || event.tool_name === 'read_sandbox_file') {
+      const name = getLocalizedToolName(event.tool_name);
+      return `${formatToolTitleWithDetail(name, getSandboxToolPath(event))}...`;
+    }
+    if (event.tool_name === 'shell_exec') {
+      return t('agentStream.toolStatus.shellExecRunning');
+    }
     const localizedName = getLocalizedToolName(event.tool_name);
     return t('agentStream.toolStatus.calling', { name: localizedName });
   }
@@ -2705,10 +2808,44 @@ const getToolTitle = (event: any): string => {
     return pageLabel ? `${baseTitle}：「${sanitizeForDisplay(pageLabel)}」` : baseTitle;
   }
 
+  if (toolName === 'read_skill') {
+    return formatToolTitleWithDetail(getToolDescription(event), getReadSkillTarget(event));
+  }
+
+  if (toolName === 'list_sandbox_files' || toolName === 'read_sandbox_file') {
+    return formatToolTitleWithDetail(getToolDescription(event), getSandboxToolPath(event));
+  }
+
+  if (toolName === 'execute_skill_script') {
+    const command = previewShellCommand(skillScriptCommandLabel(event))
+    const baseTitle = formatToolTitleWithDetail(getToolDescription(event), getEventSkillName(event))
+    const rest = skillScriptTitleCommand(getEventSkillName(event), command)
+    return rest ? `${baseTitle}：${rest}` : baseTitle
+  }
+
+  if (toolName === 'shell_exec') {
+    const command = previewShellCommand(skillScriptCommandLabel(event))
+    const baseTitle = getToolDescription(event)
+    return command ? `${baseTitle}：${command}` : baseTitle
+  }
+
   // Use tool summary if available
   const summary = getToolSummary(event);
   return summary || getToolDescription(event);
 };
+
+const skillScriptCommandLabel = (event: any): string => {
+  const fromData = String(event?.tool_data?.command || event?.arguments?.command || '').trim()
+  if (fromData) return fromData
+  const skill = String(event?.tool_data?.skill_name || event?.arguments?.skill_name || '').trim()
+  const script = String(event?.tool_data?.script_path || event?.arguments?.script_path || '').trim()
+  const path = [skill, script].filter(Boolean).join('/')
+  const args = event?.tool_data?.args || event?.arguments?.args
+  if (Array.isArray(args) && args.length) {
+    return [path, ...args.map((arg: unknown) => String(arg))].filter(Boolean).join(' ')
+  }
+  return path
+}
 
 // Tool description
 const getToolDescription = (event: any): string => {
@@ -2721,6 +2858,21 @@ const getToolDescription = (event: any): string => {
     }
     if (event.tool_name === 'query_understand') {
       return t('agentStream.toolStatus.queryUnderstanding');
+    }
+    if (event.tool_name === 'read_skill') {
+      const name = getLocalizedToolName(event.tool_name);
+      return `${formatToolTitleWithDetail(name, getReadSkillTarget(event))}...`;
+    }
+    if (event.tool_name === 'execute_skill_script') {
+      const name = getLocalizedToolName(event.tool_name);
+      return `${formatToolTitleWithDetail(name, getEventSkillName(event))}...`;
+    }
+    if (event.tool_name === 'list_sandbox_files' || event.tool_name === 'read_sandbox_file') {
+      const name = getLocalizedToolName(event.tool_name);
+      return `${formatToolTitleWithDetail(name, getSandboxToolPath(event))}...`;
+    }
+    if (event.tool_name === 'shell_exec') {
+      return t('agentStream.toolStatus.shellExecRunning');
     }
     const localizedName = getLocalizedToolName(event.tool_name);
     return t('agentStream.toolStatus.calling', { name: localizedName });
@@ -2752,6 +2904,9 @@ const getToolDescription = (event: any): string => {
     return success ? t('agentStream.toolStatus.attachmentParsingDone') : t('agentStream.toolStatus.attachmentParsingFailed');
   } else if (toolName === 'query_understand') {
     return success ? t('agentStream.toolStatus.queryUnderstandDone') : t('agentStream.toolStatus.calledFailed', { name: getLocalizedToolName(toolName) });
+  } else if (toolName === 'shell_exec' || toolName === 'execute_skill_script' || toolName === 'read_skill' || toolName === 'list_sandbox_files' || toolName === 'read_sandbox_file') {
+    const localizedName = getLocalizedToolName(toolName);
+    return success ? localizedName : t('agentStream.toolStatus.calledFailed', { name: localizedName });
   } else {
     const localizedName = getLocalizedToolName(toolName);
     return success ? t('agentStream.toolStatus.called', { name: localizedName }) : t('agentStream.toolStatus.calledFailed', { name: localizedName });

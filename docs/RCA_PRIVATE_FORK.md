@@ -27,7 +27,7 @@ Skill 与知识库是两个独立模块。Skill 保存诊断步骤、停止条�
    - `query_operational_evidence`
    - `submit_rca_report`（仅提交待人工确认的报告，不执行处置）
 3. Steel 只调用同源 `/back/rca/ai/*` BFF；WeKnora API Key 只存于 `mcp-app` 服务端，不进入浏览器。
-4. 资源通过 `scripts/rca_bootstrap.py` 幂等创建，不通过 SQL 写入 WeKnora 数据库。
+4. 资源通过 `scripts/rca_bootstrap.py` 幂等创建；RCA Skill 注册到工作区 Catalog 并安装到指定 Sandbox，不通过 SQL 写入 WeKnora 数据库。
 5. Agent 只给出诊断、证据、建议与报告，不声称已经执行处置。写操作和外部消息推送必须进入独立工具，并由 Steel 展示确认步骤。
 
 ## 保留与裁剪
@@ -64,6 +64,16 @@ go test ./internal/handler ./internal/handler/session ./internal/router
 python3 scripts/test_rca_bootstrap.py
 ```
 
+初始化时必须显式传入三个模型 ID 和 RCA Agent 使用的 Sandbox 配置 ID：
+
+```bash
+python3 scripts/rca_bootstrap.py \
+  --model-id <id> \
+  --rerank-model-id <id> \
+  --embedding-model-id <id> \
+  --sandbox-config-id <id>
+```
+
 随后在隔离环境验证数据库迁移、知识入库、检索、Agent 工具白名单、原生 SSE 对话、报告确认和旧会话读取。通过一条真实告警试点后再更新生产镜像标签。
 
 ## 回滚与升级红线
@@ -76,7 +86,7 @@ python3 scripts/test_rca_bootstrap.py
 
 ## 当前私有差异入口
 
-- RCA Skill：`skills/preloaded/rca-diagnosis/`
+- RCA Skill 源目录：`skills/preloaded/rca-diagnosis/`（由 bootstrap 打包、注册到 Catalog 并安装）
 - RCA 资源初始化：`scripts/rca_bootstrap.py`
 
 WeKnora 的通用前端和 Embed 实现保留上游源码，但不属于 RCA 生产运行边界，也不创建 RCA Embed Channel。

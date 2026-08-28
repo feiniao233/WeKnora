@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
-	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/agent/skills"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -128,26 +126,7 @@ func (s *skillService) GetSkillByName(ctx context.Context, name string) (*skills
 		return nil, fmt.Errorf("failed to load skill: %w", err)
 	}
 
-	files, err := s.loader.ListSkillFiles(name)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list skill files: %w", err)
-	}
-	resources := make([]*skills.SkillFile, 0, len(files))
-	for _, fileName := range files {
-		if fileName == skills.SkillFileName {
-			continue
-		}
-		file, err := s.loader.LoadSkillFile(name, fileName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load skill file %s: %w", fileName, err)
-		}
-		if utf8.ValidString(file.Content) && !strings.ContainsRune(file.Content, 0) {
-			resources = append(resources, file)
-		}
-	}
-	result := *skill
-	result.Resources = resources
-	return &result, nil
+	return skill, nil
 }
 
 // GetPreloadedDir returns the configured preloaded skills directory

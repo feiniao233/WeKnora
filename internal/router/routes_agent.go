@@ -78,10 +78,19 @@ func RegisterSkillRoutes(r *gin.RouterGroup, skillHandler *handler.SkillHandler,
 	// Allow full-access keys and scoped keys that can read/manage agents.
 	skills := g.apiKeyGroup(r.Group("/skills"), apiKeyReadAgents(apiKeyManageAgents(apiKeyFullAccess())))
 	{
-		// List all preloaded skills — Viewer+
+		// Usable skills for @ mention / chat — Viewer+
 		skills.GET("", g.Viewer(), skillHandler.ListSkills)
-		// Inspect one preloaded skill — Viewer+
-		skills.GET("/:name", g.Viewer(), skillHandler.GetSkill)
+		// Catalog reads are Viewer+ so the agent editor can show uninstalled skills.
+		skills.GET("/catalog", g.Viewer(), skillHandler.ListCatalog)
+	}
+	// Catalog writes bake into sandbox images; scoped API keys cannot hold them.
+	catalogWrite := g.apiKeyGroup(r.Group("/skills/catalog"), apiKeyFullAccess())
+	{
+		catalogWrite.POST("", g.Admin(), skillHandler.RegisterCatalog)
+		catalogWrite.POST("/:id/install", g.Admin(), skillHandler.InstallCatalog)
+		catalogWrite.GET("/:id/files", g.Admin(), skillHandler.ListCatalogFiles)
+		catalogWrite.GET("/:id/files/content", g.Admin(), skillHandler.GetCatalogFile)
+		catalogWrite.DELETE("/:id", g.Admin(), skillHandler.DeleteCatalog)
 	}
 }
 

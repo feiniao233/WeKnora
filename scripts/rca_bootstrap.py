@@ -14,17 +14,19 @@ import ssl
 import tempfile
 import urllib.parse
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-STATE_VERSION = 2
+STATE_VERSION = 3
 DEFAULT_BASE_URL = "http://127.0.0.1"
 DEFAULT_API_KEY_FILE = "/root/.local/share/weknora/bootstrap-api-key"
 DEFAULT_OPS_MCP_KEY_ENV = "OPS_MCP_API_KEY"
 DEFAULT_KNOWLEDGE_DIR = "/root/code/work/rca-app/docs/knowledge"
 DEFAULT_STATE_FILE = "/root/.local/share/weknora/rca-bootstrap.json"
 DEFAULT_MCP_URL = "https://172.16.20.230/back/rca/mcp"
+DEFAULT_SKILL_DIR = Path(__file__).resolve().parents[1] / "skills/preloaded/rca-diagnosis"
 
 KB_NAME = "根因分析运维知识库"
 LEGACY_KB_NAME = "RCA 运维知识库"
@@ -103,6 +105,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--embedding-model-id",
         required=True,
         help="Embedding model id used by RCA knowledge base.",
+    )
+    parser.add_argument(
+        "--sandbox-config-id",
+        default="",
+        help="Sandbox config id for the RCA skill (required unless --dry-run).",
     )
     parser.add_argument(
         "--knowledge-dir",
@@ -218,6 +225,18 @@ def collect_knowledge_files(root: str) -> List[Path]:
     if not root_path.exists():
         return []
     return sorted([p for p in root_path.rglob("*") if p.is_file()])
+
+
+def build_skill_archive(source: Path, destination: Path) -> None:
+    if not (source / "SKILL.md").is_file():
+        raise RuntimeError(f"RCA skill directory is invalid: {source}")
+    with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for item in sorted(path for path in source.rglob("*") if path.is_file()):
+            info = zipfile.ZipInfo(item.relative_to(source).as_posix(), (1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3
+            info.external_attr = ((0o755 if os.access(item, os.X_OK) else 0o644) & 0xFFFF) << 16
+            archive.writestr(info, item.read_bytes(), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
 
 
 def find_by_name(rows: Iterable[Dict[str, Any]], target: str) -> Optional[Dict[str, Any]]:
@@ -373,6 +392,7 @@ class RCAConfig:
         knowledge_dir: str,
         state_file: Path,
         ops_mcp_url: str,
+        sandbox_config_id: str,
         dry_run: bool = False,
     ) -> None:
         self.base_url = base_url
@@ -382,6 +402,7 @@ class RCAConfig:
         self.knowledge_dir = knowledge_dir
         self.state_file = state_file
         self.ops_mcp_url = ops_mcp_url
+        self.sandbox_config_id = sandbox_config_id
         self.dry_run = dry_run
 
 
@@ -567,6 +588,30 @@ class RCABootstrapper:
         self.state.set_id("mcp_service_id", mcp_id)
         return mcp_id
 
+    def _ensure_skill(self) -> str:
+        fd, archive_name = tempfile.mkstemp(prefix="rca-diagnosis-", suffix=".zip")
+        os.close(fd)
+        archive_path = Path(archive_name)
+        try:
+            build_skill_archive(DEFAULT_SKILL_DIR, archive_path)
+            created = unwrap_api_payload(self._post_file("/api/v1/skills/catalog", archive_path))
+        finally:
+            archive_path.unlink(missing_ok=True)
+        if not isinstance(created, dict) or "id" not in created:
+            raise RuntimeError("Unexpected skill catalog payload")
+        catalog_id = str(created["id"])
+        install = self._post(
+            f"/api/v1/skills/catalog/{urllib.parse.quote(catalog_id, safe='')}/install",
+            {"sandbox_config_ids": [self.config.sandbox_config_id]},
+        )
+        if isinstance(install, dict) and install.get("success") is False:
+            raise RuntimeError(f"Skill install failed: {json.dumps(install, ensure_ascii=False)}")
+        self._record("skill_catalog", endpoint="/api/v1/skills/catalog", action="registered", id=catalog_id)
+        self._record("skill_install", endpoint="/api/v1/skills/catalog/{id}/install", action="requested")
+        self.state.set_id("skill_catalog_id", catalog_id)
+        self.state.set_id("sandbox_config_id", self.config.sandbox_config_id)
+        return catalog_id
+
     def _agent_payload(self, kb_id: str, mcp_id: str) -> Dict[str, Any]:
         return {
             "name": AGENT_NAME,
@@ -590,6 +635,7 @@ class RCABootstrapper:
                 "mcp_services": [mcp_id],
                 "skills_selection_mode": "selected",
                 "selected_skills": ["rca-diagnosis"],
+                "sandbox_config_id": self.config.sandbox_config_id,
                 "kb_selection_mode": "selected",
                 "knowledge_bases": [kb_id],
                 "web_search_enabled": False,
@@ -651,6 +697,7 @@ class RCABootstrapper:
             self.summary["status"] = "dry_run"
             self.summary["resource_ids"]["knowledge_base_id"] = self.state.get("knowledge_base_id")
             self.summary["resource_ids"]["mcp_service_id"] = self.state.get("mcp_service_id")
+            self.summary["resource_ids"]["skill_catalog_id"] = self.state.get("skill_catalog_id")
             self.summary["resource_ids"]["agent_id"] = self.state.get("agent_id")
             return self.summary
 
@@ -658,20 +705,25 @@ class RCABootstrapper:
             not self.config.model_id.strip()
             or not self.config.rerank_model_id.strip()
             or not self.config.embedding_model_id.strip()
+            or not self.config.sandbox_config_id.strip()
         ):
-            raise RuntimeError("chat, rerank, and embedding model ids are required")
+            raise RuntimeError("chat, rerank, embedding model, and sandbox config ids are required")
         kb_id = self._ensure_kb()
         mcp_id = self._ensure_mcp()
+        catalog_id = self._ensure_skill()
         agent_id = self._ensure_agent(kb_id, mcp_id)
         self._retire_legacy_embed_channel()
         self.state.set_id("version", STATE_VERSION)
         self.state.set_id("knowledge_base_id", kb_id)
         self.state.set_id("mcp_service_id", mcp_id)
+        self.state.set_id("skill_catalog_id", catalog_id)
+        self.state.set_id("sandbox_config_id", self.config.sandbox_config_id)
         self.state.set_id("agent_id", agent_id)
 
         self.summary["resource_ids"] = {
             "knowledge_base_id": kb_id,
             "mcp_service_id": mcp_id,
+            "skill_catalog_id": catalog_id,
             "agent_id": agent_id,
         }
         self.summary["status"] = "ok"
@@ -679,15 +731,17 @@ class RCABootstrapper:
         return self.summary
 
 
-def dry_run_summary(config: RCAConfig, state: BootstrapState) -> Dict[str, Any]:
+def dry_run_summary(config: RCAConfig, state: Optional[BootstrapState]) -> Dict[str, Any]:
     return {
-        "usage": "rca_bootstrap.py --model-id <id> --rerank-model-id <id> --embedding-model-id <id>",
+        "usage": "rca_bootstrap.py --model-id <id> --rerank-model-id <id> --embedding-model-id <id> --sandbox-config-id <id>",
         "dry_run": True,
         "phases": [
             {"phase": "knowledge_base", "endpoint": "/api/v1/knowledge-bases", "action": "get/create-by-name"},
             {"phase": "knowledge_files", "endpoint": "/api/v1/knowledge-bases/{id}/knowledge/file", "action": "dedupe-upload"},
             {"phase": "mcp", "endpoint": "/api/v1/mcp-services", "action": "get/create-by-name"},
             {"phase": "mcp_test", "endpoint": "/api/v1/mcp-services/{id}/test", "action": f"exact-match-tools {OPS_TOOLS}"},
+            {"phase": "skill_catalog", "endpoint": "/api/v1/skills/catalog", "action": "register-or-update-zip"},
+            {"phase": "skill_install", "endpoint": "/api/v1/skills/catalog/{id}/install", "action": "install-to-sandbox"},
             {"phase": "agent", "endpoint": "/api/v1/agents", "action": "get/create-by-name"},
         ],
         "config": {
@@ -696,12 +750,15 @@ def dry_run_summary(config: RCAConfig, state: BootstrapState) -> Dict[str, Any]:
             "mcp_name": MCP_NAME,
             "agent_name": AGENT_NAME,
             "rerank_model_id": config.rerank_model_id,
+            "sandbox_config_id": config.sandbox_config_id,
             "state_file": str(config.state_file),
         },
     }
 
 
 def build_bootstrap_config(args: argparse.Namespace) -> Tuple[RCAConfig, str, str]:
+    if not args.sandbox_config_id.strip():
+        raise RuntimeError("Sandbox config id missing: set --sandbox-config-id")
     workspace_key = read_secret(args.api_key_file, "WEKNORA_API_KEY")
     if not workspace_key:
         raise RuntimeError("Workspace API key missing: set --api-key-file or WEKNORA_API_KEY")
@@ -718,6 +775,7 @@ def build_bootstrap_config(args: argparse.Namespace) -> Tuple[RCAConfig, str, st
             knowledge_dir=args.knowledge_dir,
             state_file=Path(args.state_file).expanduser(),
             ops_mcp_url=args.ops_mcp_url,
+            sandbox_config_id=args.sandbox_config_id.strip(),
             dry_run=args.dry_run,
         ),
         workspace_key,
@@ -736,6 +794,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             knowledge_dir=args.knowledge_dir,
             state_file=Path(args.state_file).expanduser(),
             ops_mcp_url=args.ops_mcp_url,
+            sandbox_config_id=args.sandbox_config_id.strip() or "sandbox-placeholder",
             dry_run=True,
         )
         state = BootstrapState.load(config.state_file)

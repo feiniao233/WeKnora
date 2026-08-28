@@ -1,6 +1,8 @@
+import hashlib
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -17,6 +19,7 @@ from rca_bootstrap import (  # noqa: E402
     OPS_TOOLS,
     RCAConfig,
     RCABootstrapper,
+    dry_run_summary,
 )
 
 
@@ -28,6 +31,7 @@ class FakeClient:
         self.mcps = []
         self.agents = []
         self.channels = []
+        self.catalogs = []
         self.next_id = 1
 
     def response(self, data):
@@ -52,6 +56,8 @@ class FakeClient:
             return self.response(self.mcps)
         if parts == ["api", "v1", "agents"]:
             return self.response(self.agents)
+        if parts == ["api", "v1", "skills", "catalog"]:
+            return self.response(self.catalogs)
         if parts[:3] == ["api", "v1", "embed-channels"]:
             return self.response(self.find(self.channels, parts[3]))
         raise AssertionError(f"unexpected GET {path}")
@@ -74,6 +80,9 @@ class FakeClient:
             row = {"id": self.new_id("agent"), **payload}
             self.agents.append(row)
             return self.response(row)
+        if parts[:4] == ["api", "v1", "skills", "catalog"] and parts[-1] == "install":
+            installs = {config_id: self.new_id("skill") for config_id in payload["sandbox_config_ids"]}
+            return self.response({"installs": installs})
         raise AssertionError(f"unexpected POST {path}")
 
     def put_json(self, path, payload):
@@ -106,6 +115,15 @@ class FakeClient:
 
     def post_multipart_file(self, path, file_path):
         self.calls.append(("FILE", path, file_path.name))
+        if path == "/api/v1/skills/catalog":
+            digest = hashlib.sha256(file_path.read_bytes()).hexdigest()
+            with zipfile.ZipFile(file_path) as archive:
+                self.calls.append(("ZIP", tuple(archive.namelist()), digest))
+            row = next((item for item in self.catalogs if item["name"] == "rca-diagnosis"), None)
+            if row is None:
+                row = {"id": self.new_id("catalog"), "name": "rca-diagnosis"}
+                self.catalogs.append(row)
+            return self.response(row)
         kb_id = path.strip("/").split("/")[3]
         row = {"id": self.new_id("doc"), "file_name": file_path.name, "title": file_path.name}
         self.docs[kb_id].append(row)
@@ -134,6 +152,7 @@ class BootstrapTest(unittest.TestCase):
             knowledge_dir=str(self.knowledge_dir),
             state_file=self.state_file,
             ops_mcp_url="https://172.16.20.230/back/rca/mcp",
+            sandbox_config_id="sandbox-config",
         )
         runner = RCABootstrapper(config, "workspace-secret", "ops-secret", self.client)
         result = runner.run()
@@ -149,12 +168,13 @@ class BootstrapTest(unittest.TestCase):
         first = self.run_bootstrap()
         second = self.run_bootstrap()
 
-        for resource in ("knowledge_base_id", "mcp_service_id", "agent_id"):
+        for resource in ("knowledge_base_id", "mcp_service_id", "skill_catalog_id", "agent_id"):
             self.assertEqual(first["resource_ids"][resource], second["resource_ids"][resource])
         self.assertEqual(len(self.client.kbs), 1)
         self.assertEqual(len(self.client.docs[first["resource_ids"]["knowledge_base_id"]]), 1)
         self.assertEqual(len(self.client.mcps), 1)
         self.assertEqual(len(self.client.agents), 1)
+        self.assertEqual(len(self.client.catalogs), 1)
         self.assertEqual(self.client.channels, [])
         self.assertEqual(self.state_file.stat().st_mode & 0o777, 0o600)
         self.assertNotIn("embed_channel_id", self.state_file.read_text(encoding="utf-8"))
@@ -171,16 +191,57 @@ class BootstrapTest(unittest.TestCase):
         self.assertIn("submit_rca_report", OPS_TOOLS)
         self.assertIn("submit_rca_report", self.client.agents[0]["config"]["system_prompt"])
         self.assertEqual(self.client.agents[0]["config"]["rerank_model_id"], "rerank-model")
+        self.assertEqual(self.client.agents[0]["config"]["sandbox_config_id"], "sandbox-config")
+        self.assertEqual(self.client.agents[0]["config"]["selected_skills"], ["rca-diagnosis"])
+        self.assertEqual(first["resource_ids"]["skill_catalog_id"], self.client.catalogs[0]["id"])
+        install_call = (
+            "POST",
+            f'/api/v1/skills/catalog/{self.client.catalogs[0]["id"]}/install',
+            {"sandbox_config_ids": ["sandbox-config"]},
+        )
+        self.assertEqual(
+            self.client.calls.count(install_call),
+            2,
+        )
+        catalog_uploads = [call for call in self.client.calls if call[:2] == ("FILE", "/api/v1/skills/catalog")]
+        self.assertEqual(len(catalog_uploads), 2)
+        zip_calls = [call for call in self.client.calls if call[0] == "ZIP"]
+        self.assertIn("SKILL.md", zip_calls[0][1])
+        self.assertIn("references/ip-conflict.md", zip_calls[0][1])
+        self.assertEqual(zip_calls[0][1], zip_calls[1][1])
+        self.assertEqual(zip_calls[0][2], zip_calls[1][2])
         agent_put_calls = [call for call in self.client.calls if call[0] == "PUT" and call[1].startswith("/api/v1/agents/")]
         self.assertTrue(agent_put_calls)
         self.assertEqual(agent_put_calls[-1][2]["config"]["rerank_model_id"], "rerank-model")
+        state = self.state_file.read_text(encoding="utf-8")
+        self.assertIn('"skill_catalog_id"', state)
+        self.assertIn('"sandbox_config_id": "sandbox-config"', state)
+
+    def test_dry_run_plans_catalog_install_and_sandbox_agent(self):
+        config = RCAConfig(
+            base_url="http://127.0.0.1",
+            model_id="chat-model",
+            rerank_model_id="rerank-model",
+            embedding_model_id="embedding-model",
+            knowledge_dir=str(self.knowledge_dir),
+            state_file=self.state_file,
+            ops_mcp_url="https://example.test/mcp",
+            sandbox_config_id="sandbox-placeholder",
+            dry_run=True,
+        )
+        summary = dry_run_summary(config, None)
+        phases = {item["phase"]: item for item in summary["phases"]}
+        self.assertEqual(phases["skill_catalog"]["endpoint"], "/api/v1/skills/catalog")
+        self.assertEqual(phases["skill_install"]["endpoint"], "/api/v1/skills/catalog/{id}/install")
+        self.assertEqual(summary["config"]["sandbox_config_id"], "sandbox-placeholder")
 
     def test_empty_knowledge_directory_creates_resources_without_uploads(self):
         for item in self.knowledge_dir.iterdir():
             item.unlink()
         result = self.run_bootstrap()
         self.assertEqual(result["status"], "ok")
-        self.assertFalse(any(call[0] == "FILE" for call in self.client.calls))
+        upload_path = f"/api/v1/knowledge-bases/{result['resource_ids']['knowledge_base_id']}/knowledge/file"
+        self.assertFalse(any(call[:2] == ("FILE", upload_path) for call in self.client.calls))
 
     def test_renames_legacy_resources_without_creating_duplicates(self):
         self.client.kbs.append({"id": "kb-legacy", "name": LEGACY_KB_NAME, "category": "general"})

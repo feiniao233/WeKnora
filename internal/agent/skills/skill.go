@@ -46,6 +46,9 @@ type Skill struct {
 	// Instructions (Level 2) - loaded on demand
 	Instructions string // The main body of SKILL.md (after frontmatter)
 	Loaded       bool   // Whether Level 2 instructions have been loaded
+
+	// Resources (Level 3) - additional text files loaded on demand
+	Resources []*SkillFile
 }
 
 // SkillMetadata represents the minimal metadata for system prompt injection (Level 1)

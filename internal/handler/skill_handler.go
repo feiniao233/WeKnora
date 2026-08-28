@@ -31,7 +31,14 @@ type SkillInfoResponse struct {
 
 type SkillDetailResponse struct {
 	SkillInfoResponse
-	Instructions string `json:"instructions"`
+	Instructions string                  `json:"instructions"`
+	Resources    []SkillResourceResponse `json:"resources"`
+}
+
+type SkillResourceResponse struct {
+	Name     string `json:"name"`
+	Content  string `json:"content"`
+	IsScript bool   `json:"is_script"`
 }
 
 // ListSkills godoc
@@ -87,11 +94,18 @@ func (h *SkillHandler) GetSkill(c *gin.Context) {
 		c.Error(errors.NewNotFoundError("Skill not found"))
 		return
 	}
+	resources := make([]SkillResourceResponse, 0, len(skill.Resources))
+	for _, resource := range skill.Resources {
+		resources = append(resources, SkillResourceResponse{
+			Name: resource.Name, Content: resource.Content, IsScript: resource.IsScript,
+		})
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": SkillDetailResponse{
 			SkillInfoResponse: SkillInfoResponse{Name: skill.Name, Description: skill.Description},
 			Instructions:      skill.Instructions,
+			Resources:         resources,
 		},
 	})
 }

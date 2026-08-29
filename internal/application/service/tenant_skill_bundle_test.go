@@ -334,6 +334,49 @@ Use scripts/extract.py to pull text out of a PDF.
 	})
 }
 
+func TestReplaceSkillZipFilePreservesOtherCompressedContent(t *testing.T) {
+	archive := zipBundle(t, map[string]string{
+		"wrapped/SKILL.md":         validSkillMD,
+		"wrapped/references/a.md":  "old\n",
+		"wrapped/scripts/tool.bin": "\x00\x01\x02",
+	})
+	before, err := skillZipFileIndex(archive)
+	require.NoError(t, err)
+	rawBefore, err := before["scripts/tool.bin"].file.OpenRaw()
+	require.NoError(t, err)
+	compressedBefore, err := io.ReadAll(rawBefore)
+	require.NoError(t, err)
+
+	updated, err := replaceSkillZipFile(archive, "references/a.md", []byte("new\n"))
+	require.NoError(t, err)
+	after, err := skillZipFileIndex(updated)
+	require.NoError(t, err)
+	rawAfter, err := after["scripts/tool.bin"].file.OpenRaw()
+	require.NoError(t, err)
+	compressedAfter, err := io.ReadAll(rawAfter)
+	require.NoError(t, err)
+	require.Equal(t, compressedBefore, compressedAfter)
+	body, err := readLimitedZipEntry(after["references/a.md"].file)
+	require.NoError(t, err)
+	require.Equal(t, []byte("new\n"), body)
+}
+
+func TestParseSkillBundleRejectsDuplicateEntries(t *testing.T) {
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	for range 2 {
+		entry, err := w.Create("SKILL.md")
+		require.NoError(t, err)
+		_, err = entry.Write([]byte(validSkillMD))
+		require.NoError(t, err)
+	}
+	require.NoError(t, w.Close())
+
+	_, err := ParseSkillBundle(buf.Bytes())
+	require.ErrorIs(t, err, ErrSkillBundleInvalid)
+	require.ErrorContains(t, err, "duplicate entry")
+}
+
 func TestListSkillZipFilesDoesNotInflateBodies(t *testing.T) {
 	data := zipBundle(t, map[string]string{
 		"pdf-tools/SKILL.md":           validSkillMD,

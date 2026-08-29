@@ -123,6 +123,11 @@ type catalogInstallRequest struct {
 	SandboxConfigIDs []string `json:"sandbox_config_ids"`
 }
 
+type catalogFileUpdateRequest struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
 // InstallCatalog godoc
 // @Summary      Install a catalog skill onto sandboxes
 // @Description  Runs the existing snapshot install onto each named sandbox config.
@@ -227,6 +232,42 @@ func (h *SkillHandler) GetCatalogFile(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": file})
+}
+
+// UpdateCatalogFile godoc
+// @Summary      Update one text file of a catalog skill
+// @Description  Replaces an existing UTF-8 text file in the catalog bundle. Installed snapshots are unchanged.
+// @Tags         Skills
+// @Accept       json
+// @Produce      json
+// @Param        id  path  string  true  "Catalog skill ID"
+// @Success      200 {object} map[string]interface{}
+// @Router       /skills/catalog/{id}/files/content [patch]
+func (h *SkillHandler) UpdateCatalogFile(c *gin.Context) {
+	if h.catalog == nil {
+		_ = c.Error(apperrors.NewInternalServerError("skill catalog is not configured"))
+		return
+	}
+	// JSON escaping can make a valid 1 MiB text value several times larger.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 7<<20)
+	var req catalogFileUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if stderrors.As(err, &tooLarge) {
+			_ = c.Error(apperrors.NewBadRequestError("skill file update request is too large"))
+			return
+		}
+		_ = c.Error(apperrors.NewBadRequestError("invalid skill file update request"))
+		return
+	}
+	result, err := h.catalog.UpdateCatalogFile(
+		c.Request.Context(), sandboxConfigTenantID(c), c.Param("id"), req.Path, req.Content,
+	)
+	if err != nil {
+		respondSkillServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }
 
 func catalogIDResponse(cat *types.TenantSkillCatalogEntity) gin.H {

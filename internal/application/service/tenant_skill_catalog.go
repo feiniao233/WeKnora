@@ -444,6 +444,67 @@ func (s *TenantSkillService) ReadCatalogFile(
 	return projectSkillFileContent(clean, body), nil
 }
 
+// UpdateCatalogFile replaces one existing UTF-8 text file in the catalog
+// bundle. It intentionally does not reinstall the catalog onto sandboxes.
+func (s *TenantSkillService) UpdateCatalogFile(
+	ctx context.Context, tenantID uint64, catalogID, relativePath, content string,
+) (*SkillFileContent, error) {
+	clean, err := safeSkillFilePath(relativePath)
+	if err != nil {
+		return nil, apperrors.NewBadRequestError(err.Error())
+	}
+	newBody := []byte(content)
+	if len(newBody) > skillFileTextLimit {
+		return nil, apperrors.NewBadRequestError("skill file content is larger than 1 MiB")
+	}
+	if skillFileLooksBinary(newBody) {
+		return nil, apperrors.NewBadRequestError("skill file content must be UTF-8 text")
+	}
+
+	catalog, err := s.skills.GetCatalog(ctx, tenantID, strings.TrimSpace(catalogID))
+	if err != nil {
+		return nil, err
+	}
+	if catalog == nil {
+		return nil, apperrors.NewNotFoundError("skill not found")
+	}
+	archive, err := s.catalogBundleArchive(ctx, tenantID, catalog)
+	if err != nil {
+		return nil, err
+	}
+	oldBody, err := readSkillZipFile(archive, clean)
+	if err != nil {
+		if errors.Is(err, errSkillFileMissing) {
+			return nil, apperrors.NewNotFoundError("skill file not found")
+		}
+		return nil, err
+	}
+	current := projectSkillFileContent(clean, oldBody)
+	if current.Encoding != skillFileEncodingUTF8 || current.Truncated || current.Binary {
+		return nil, apperrors.NewBadRequestError("only untruncated UTF-8 text files can be edited")
+	}
+
+	updatedArchive, err := replaceSkillZipFile(archive, clean, newBody)
+	if err != nil {
+		return nil, err
+	}
+	bundle, err := ParseSkillBundle(updatedArchive)
+	if err != nil {
+		return nil, err
+	}
+	if bundle.Name != catalog.Name {
+		return nil, apperrors.NewBadRequestError("SKILL.md name cannot be changed")
+	}
+	updated, err := s.upsertCatalogFromBundle(ctx, tenantID, bundle, updatedArchive, true)
+	if err != nil {
+		return nil, err
+	}
+	if updated == nil || updated.ID != catalog.ID {
+		return nil, fmt.Errorf("catalog ID changed while updating skill file")
+	}
+	return projectSkillFileContent(clean, newBody), nil
+}
+
 func (s *TenantSkillService) loadCatalogArchive(
 	ctx context.Context, tenantID uint64, catalogID string,
 ) ([]byte, error) {

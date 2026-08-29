@@ -155,3 +155,60 @@ func TestInstallCatalogToConfigsReportsPartialFailure(t *testing.T) {
 	require.Contains(t, result.Installs, "cfg-1")
 	require.Equal(t, "sandbox config not found", result.Errors["missing"])
 }
+
+func TestUpdateCatalogFileReplacesTextAndKeepsCatalogIdentity(t *testing.T) {
+	fx := newInstallFixture(t)
+	ctx := context.Background()
+	archive := zipBundle(t, map[string]string{
+		"SKILL.md":              validSkillMD,
+		"references/runbook.md": "old\n",
+		"scripts/tool.bin":      "\x00\x01",
+	})
+	cat, err := fx.svc.RegisterCatalogFromArchive(ctx, 7, archive)
+	require.NoError(t, err)
+	oldSHA := cat.BundleSHA256
+	installBefore, err := fx.skillRepo.GetSkill(ctx, 7, "cfg-1", "sk-1")
+	require.NoError(t, err)
+
+	got, err := fx.svc.UpdateCatalogFile(ctx, 7, cat.ID, "references/runbook.md", "new\n")
+	require.NoError(t, err)
+	require.Equal(t, "new\n", got.Content)
+	require.Equal(t, skillFileEncodingUTF8, got.Encoding)
+
+	updated, err := fx.skillRepo.GetCatalog(ctx, 7, cat.ID)
+	require.NoError(t, err)
+	require.Equal(t, cat.ID, updated.ID)
+	require.NotEqual(t, oldSHA, updated.BundleSHA256)
+	bundle, err := ParseSkillBundle(fx.storedBundles[updated.BundleRef])
+	require.NoError(t, err)
+	require.Equal(t, []byte("new\n"), bundle.Files["references/runbook.md"])
+	require.Equal(t, []byte{0, 1}, bundle.Files["scripts/tool.bin"])
+
+	installAfter, err := fx.skillRepo.GetSkill(ctx, 7, "cfg-1", "sk-1")
+	require.NoError(t, err)
+	require.Equal(t, installBefore.BundleSHA256, installAfter.BundleSHA256)
+	require.Equal(t, installBefore.BundleRef, installAfter.BundleRef)
+}
+
+func TestUpdateCatalogFileRejectsBinaryAndNameChange(t *testing.T) {
+	fx := newInstallFixture(t)
+	ctx := context.Background()
+	archive := zipBundle(t, map[string]string{
+		"SKILL.md":         validSkillMD,
+		"assets/fake.png":  "plain text with an image extension",
+		"scripts/tool.bin": "\x00\x01",
+	})
+	cat, err := fx.svc.RegisterCatalogFromArchive(ctx, 7, archive)
+	require.NoError(t, err)
+
+	_, err = fx.svc.UpdateCatalogFile(ctx, 7, cat.ID, "scripts/tool.bin", "text")
+	require.ErrorContains(t, err, "only untruncated UTF-8 text files can be edited")
+	_, err = fx.svc.UpdateCatalogFile(ctx, 7, cat.ID, "assets/fake.png", "text")
+	require.ErrorContains(t, err, "only untruncated UTF-8 text files can be edited")
+	_, err = fx.svc.UpdateCatalogFile(ctx, 7, cat.ID, "SKILL.md", strings.Repeat("x", skillFileTextLimit+1))
+	require.ErrorContains(t, err, "larger than 1 MiB")
+	_, err = fx.svc.UpdateCatalogFile(ctx, 7, cat.ID, "SKILL.md", strings.Replace(validSkillMD, "pdf-tools", "renamed", 1))
+	require.ErrorContains(t, err, "SKILL.md name cannot be changed")
+	_, err = fx.svc.UpdateCatalogFile(ctx, 7, cat.ID, "missing.md", "text")
+	require.ErrorContains(t, err, "skill file not found")
+}

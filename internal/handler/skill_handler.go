@@ -30,6 +30,7 @@ type skillCatalogService interface {
 	DeleteCatalog(ctx context.Context, tenantID uint64, catalogID string) error
 	ListCatalogFiles(ctx context.Context, tenantID uint64, catalogID string) ([]service.SkillFileEntry, error)
 	ReadCatalogFile(ctx context.Context, tenantID uint64, catalogID, relativePath string) (*service.SkillFileContent, error)
+	UpdateCatalogFile(ctx context.Context, tenantID uint64, catalogID, relativePath, content string) (*service.SkillFileContent, error)
 }
 
 // NewSkillHandler creates a new skill handler. catalog may be nil in tests

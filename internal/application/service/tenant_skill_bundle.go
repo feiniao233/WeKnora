@@ -132,6 +132,7 @@ func skillZipEntries(archive []byte) ([]skillZipEntry, error) {
 	}
 
 	out := make([]skillZipEntry, 0, len(reader.File))
+	seen := make(map[string]struct{}, len(reader.File))
 	var totalBytes int64
 	for _, entry := range reader.File {
 		name, skip, err := inspectSkillZipEntry(entry)
@@ -141,6 +142,10 @@ func skillZipEntries(archive []byte) ([]skillZipEntry, error) {
 		if skip {
 			continue
 		}
+		if _, exists := seen[name]; exists {
+			return nil, fmt.Errorf("%w: archive holds duplicate entry %q", ErrSkillBundleInvalid, name)
+		}
+		seen[name] = struct{}{}
 		size := entry.FileInfo().Size()
 		if totalBytes+size > maxSkillBundleTotalBytes {
 			return nil, fmt.Errorf("%w: archive is too large", ErrSkillBundleInvalid)
@@ -149,6 +154,51 @@ func skillZipEntries(archive []byte) ([]skillZipEntry, error) {
 		out = append(out, skillZipEntry{file: entry, name: name, size: size})
 	}
 	return out, nil
+}
+
+// replaceSkillZipFile keeps every untouched entry in its original compressed
+// form and replaces one skill-root-relative file.
+func replaceSkillZipFile(archive []byte, relativePath string, content []byte) ([]byte, error) {
+	entries, err := skillZipEntries(archive)
+	if err != nil {
+		return nil, err
+	}
+	index, err := skillZipFileIndex(archive)
+	if err != nil {
+		return nil, err
+	}
+	target, ok := index[relativePath]
+	if !ok {
+		return nil, errSkillFileMissing
+	}
+
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	for _, item := range entries {
+		if item.name != target.name {
+			if err := writer.Copy(item.file); err != nil {
+				return nil, fmt.Errorf("copy skill zip entry %q: %w", item.name, err)
+			}
+			continue
+		}
+		header := item.file.FileHeader
+		header.CRC32 = 0
+		header.CompressedSize = 0
+		header.CompressedSize64 = 0
+		header.UncompressedSize = 0
+		header.UncompressedSize64 = 0
+		entry, err := writer.CreateHeader(&header)
+		if err != nil {
+			return nil, fmt.Errorf("replace skill zip entry %q: %w", item.name, err)
+		}
+		if _, err := entry.Write(content); err != nil {
+			return nil, fmt.Errorf("write skill zip entry %q: %w", item.name, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close skill zip: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 func inspectSkillZipEntry(entry *zip.File) (name string, skip bool, err error) {

@@ -25,6 +25,8 @@ type fakeSkillCatalog struct {
 	installErrs map[string]string
 	deleteErr   error
 	source      string
+	updatePath  string
+	updateBody  string
 }
 
 func (f *fakeSkillCatalog) ListCatalog(context.Context, uint64) ([]service.SkillCatalogView, error) {
@@ -62,6 +64,16 @@ func (f *fakeSkillCatalog) ReadCatalogFile(context.Context, uint64, string, stri
 	return nil, nil
 }
 
+func (f *fakeSkillCatalog) UpdateCatalogFile(
+	_ context.Context, _ uint64, _, relativePath, content string,
+) (*service.SkillFileContent, error) {
+	f.updatePath = relativePath
+	f.updateBody = content
+	return &service.SkillFileContent{
+		Path: relativePath, Size: int64(len(content)), Encoding: "utf-8", Content: content,
+	}, nil
+}
+
 func newCatalogRouter(h *SkillHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -73,8 +85,32 @@ func newCatalogRouter(h *SkillHandler) *gin.Engine {
 	r.GET("/skills/catalog", h.ListCatalog)
 	r.POST("/skills/catalog", h.RegisterCatalog)
 	r.POST("/skills/catalog/:id/install", h.InstallCatalog)
+	r.PATCH("/skills/catalog/:id/files/content", h.UpdateCatalogFile)
 	r.DELETE("/skills/catalog/:id", h.DeleteCatalog)
 	return r
+}
+
+func TestUpdateCatalogFileReturnsUpdatedContent(t *testing.T) {
+	catalog := &fakeSkillCatalog{}
+	router := newCatalogRouter(NewSkillHandler(&fakeUsableSkillLister{}, catalog))
+
+	body, err := json.Marshal(map[string]string{"path": "references/runbook.md", "content": "updated\n"})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPatch, "/skills/catalog/cat-1/files/content", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "references/runbook.md", catalog.updatePath)
+	require.Equal(t, "updated\n", catalog.updateBody)
+
+	var payload struct {
+		Success bool                     `json:"success"`
+		Data    service.SkillFileContent `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Equal(t, "updated\n", payload.Data.Content)
 }
 
 func TestListCatalogReturnsDefinitionsAndInstallations(t *testing.T) {

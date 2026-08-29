@@ -90,6 +90,7 @@ func RegisterSkillRoutes(r *gin.RouterGroup, skillHandler *handler.SkillHandler,
 		catalogWrite.POST("/:id/install", g.Admin(), skillHandler.InstallCatalog)
 		catalogWrite.GET("/:id/files", g.Admin(), skillHandler.ListCatalogFiles)
 		catalogWrite.GET("/:id/files/content", g.Admin(), skillHandler.GetCatalogFile)
+		catalogWrite.PATCH("/:id/files/content", g.Admin(), skillHandler.UpdateCatalogFile)
 		catalogWrite.DELETE("/:id", g.Admin(), skillHandler.DeleteCatalog)
 	}
 }

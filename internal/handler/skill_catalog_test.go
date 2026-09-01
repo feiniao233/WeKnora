@@ -27,6 +27,8 @@ type fakeSkillCatalog struct {
 	source      string
 	updatePath  string
 	updateBody  string
+	createPath  string
+	createBody  string
 }
 
 func (f *fakeSkillCatalog) ListCatalog(context.Context, uint64) ([]service.SkillCatalogView, error) {
@@ -74,6 +76,16 @@ func (f *fakeSkillCatalog) UpdateCatalogFile(
 	}, nil
 }
 
+func (f *fakeSkillCatalog) CreateCatalogFile(
+	_ context.Context, _ uint64, _, relativePath, content string,
+) (*service.SkillFileContent, error) {
+	f.createPath = relativePath
+	f.createBody = content
+	return &service.SkillFileContent{
+		Path: relativePath, Size: int64(len(content)), Encoding: "utf-8", Content: content,
+	}, nil
+}
+
 func newCatalogRouter(h *SkillHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -85,9 +97,25 @@ func newCatalogRouter(h *SkillHandler) *gin.Engine {
 	r.GET("/skills/catalog", h.ListCatalog)
 	r.POST("/skills/catalog", h.RegisterCatalog)
 	r.POST("/skills/catalog/:id/install", h.InstallCatalog)
+	r.POST("/skills/catalog/:id/files/content", h.CreateCatalogFile)
 	r.PATCH("/skills/catalog/:id/files/content", h.UpdateCatalogFile)
 	r.DELETE("/skills/catalog/:id", h.DeleteCatalog)
 	return r
+}
+
+func TestCreateCatalogFileReturnsCreatedContent(t *testing.T) {
+	catalog := &fakeSkillCatalog{}
+	router := newCatalogRouter(NewSkillHandler(&fakeUsableSkillLister{}, catalog))
+
+	body, err := json.Marshal(map[string]string{"path": "references/guide.md", "content": "guide\n"})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/skills/catalog/cat-1/files/content", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+	require.Equal(t, "references/guide.md", catalog.createPath)
+	require.Equal(t, "guide\n", catalog.createBody)
 }
 
 func TestUpdateCatalogFileReturnsUpdatedContent(t *testing.T) {

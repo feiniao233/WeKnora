@@ -234,6 +234,42 @@ func (h *SkillHandler) GetCatalogFile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": file})
 }
 
+// CreateCatalogFile godoc
+// @Summary      Add one text file to a catalog skill
+// @Description  Adds a new UTF-8 text file to the catalog bundle without changing installed snapshots.
+// @Tags         Skills
+// @Accept       json
+// @Produce      json
+// @Param        id  path  string  true  "Catalog skill ID"
+// @Success      201 {object} map[string]interface{}
+// @Router       /skills/catalog/{id}/files/content [post]
+func (h *SkillHandler) CreateCatalogFile(c *gin.Context) {
+	if h.catalog == nil {
+		_ = c.Error(apperrors.NewInternalServerError("skill catalog is not configured"))
+		return
+	}
+	// JSON escaping can make a valid 1 MiB text value several times larger.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 7<<20)
+	var req catalogFileUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if stderrors.As(err, &tooLarge) {
+			_ = c.Error(apperrors.NewBadRequestError("skill file create request is too large"))
+			return
+		}
+		_ = c.Error(apperrors.NewBadRequestError("invalid skill file create request"))
+		return
+	}
+	result, err := h.catalog.CreateCatalogFile(
+		c.Request.Context(), sandboxConfigTenantID(c), c.Param("id"), req.Path, req.Content,
+	)
+	if err != nil {
+		respondSkillServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": result})
+}
+
 // UpdateCatalogFile godoc
 // @Summary      Update one text file of a catalog skill
 // @Description  Replaces an existing UTF-8 text file in the catalog bundle. Installed snapshots are unchanged.

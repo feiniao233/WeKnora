@@ -212,3 +212,65 @@ func TestUpdateCatalogFileRejectsBinaryAndNameChange(t *testing.T) {
 	_, err = fx.svc.UpdateCatalogFile(ctx, 7, cat.ID, "missing.md", "text")
 	require.ErrorContains(t, err, "skill file not found")
 }
+
+func TestCreateCatalogFileAddsTextAndKeepsInstalledSnapshot(t *testing.T) {
+	fx := newInstallFixture(t)
+	ctx := context.Background()
+	archive := zipBundle(t, map[string]string{
+		"pdf-tools/SKILL.md":              validSkillMD,
+		"pdf-tools/references/runbook.md": "old\n",
+	})
+	cat, err := fx.svc.RegisterCatalogFromArchive(ctx, 7, archive)
+	require.NoError(t, err)
+	installBefore, err := fx.skillRepo.GetSkill(ctx, 7, "cfg-1", "sk-1")
+	require.NoError(t, err)
+
+	got, err := fx.svc.CreateCatalogFile(ctx, 7, cat.ID, "references/guide.md", "guide\n")
+	require.NoError(t, err)
+	require.Equal(t, "references/guide.md", got.Path)
+	require.Equal(t, "guide\n", got.Content)
+
+	updated, err := fx.skillRepo.GetCatalog(ctx, 7, cat.ID)
+	require.NoError(t, err)
+	require.Equal(t, cat.ID, updated.ID)
+	bundle, err := ParseSkillBundle(fx.storedBundles[updated.BundleRef])
+	require.NoError(t, err)
+	require.Equal(t, []byte("old\n"), bundle.Files["references/runbook.md"])
+	require.Equal(t, []byte("guide\n"), bundle.Files["references/guide.md"])
+	files, err := listSkillZipFiles(fx.storedBundles[updated.BundleRef])
+	require.NoError(t, err)
+	require.Len(t, files, 3)
+
+	installAfter, err := fx.skillRepo.GetSkill(ctx, 7, "cfg-1", "sk-1")
+	require.NoError(t, err)
+	require.Equal(t, installBefore.BundleSHA256, installAfter.BundleSHA256)
+	require.Equal(t, installBefore.BundleRef, installAfter.BundleRef)
+}
+
+func TestCreateCatalogFileRejectsDuplicateInvalidPathOversizeAndBinary(t *testing.T) {
+	fx := newInstallFixture(t)
+	ctx := context.Background()
+	cat, err := fx.svc.RegisterCatalogFromArchive(ctx, 7, zipBundle(t, map[string]string{
+		"SKILL.md":              validSkillMD,
+		"references/runbook.md": "old\n",
+	}))
+	require.NoError(t, err)
+
+	_, err = fx.svc.CreateCatalogFile(ctx, 7, cat.ID, "references/runbook.md", "new\n")
+	require.Error(t, err)
+	appErr, ok := apperrors.IsAppError(err)
+	require.True(t, ok)
+	require.Equal(t, 409, appErr.HTTPCode)
+
+	_, err = fx.svc.CreateCatalogFile(ctx, 7, cat.ID, "../escape.md", "text")
+	require.ErrorContains(t, err, "invalid skill file path")
+	_, err = fx.svc.CreateCatalogFile(ctx, 7, cat.ID, "large.md", strings.Repeat("x", skillFileTextLimit+1))
+	require.ErrorContains(t, err, "larger than 1 MiB")
+	_, err = fx.svc.CreateCatalogFile(ctx, 7, cat.ID, "bad.txt", string([]byte{0xff}))
+	require.ErrorContains(t, err, "must be UTF-8 text")
+	_, err = fx.svc.CreateCatalogFile(ctx, 7, cat.ID, "SKILL.md", validSkillMD)
+	require.Error(t, err)
+	appErr, ok = apperrors.IsAppError(err)
+	require.True(t, ok)
+	require.Equal(t, 409, appErr.HTTPCode)
+}

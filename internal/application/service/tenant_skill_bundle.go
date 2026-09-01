@@ -115,6 +115,8 @@ func unzipSkillArchive(archive []byte) (map[string][]byte, error) {
 // still ErrSkillBundleInvalid.
 var errSkillFileMissing = errors.New("skill file not found")
 
+var errSkillFileExists = errors.New("skill file already exists")
+
 type skillZipEntry struct {
 	file *zip.File
 	name string
@@ -194,6 +196,54 @@ func replaceSkillZipFile(archive []byte, relativePath string, content []byte) ([
 		if _, err := entry.Write(content); err != nil {
 			return nil, fmt.Errorf("write skill zip entry %q: %w", item.name, err)
 		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close skill zip: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// addSkillZipFile keeps every existing entry compressed and appends one file
+// under the archive's existing skill root.
+func addSkillZipFile(archive []byte, relativePath string, content []byte) ([]byte, error) {
+	entries, err := skillZipEntries(archive)
+	if err != nil {
+		return nil, err
+	}
+	index, err := skillZipFileIndex(archive)
+	if err != nil {
+		return nil, err
+	}
+	if _, exists := index[relativePath]; exists {
+		return nil, errSkillFileExists
+	}
+
+	raw := make(map[string][]byte, len(entries))
+	for _, item := range entries {
+		raw[item.name] = nil
+	}
+	prefix, err := skillRootPrefix(raw, SkillBundleParseOptions{})
+	if err != nil {
+		return nil, err
+	}
+	archiveName := relativePath
+	if prefix != "" {
+		archiveName = prefix + "/" + relativePath
+	}
+
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	for _, item := range entries {
+		if err := writer.Copy(item.file); err != nil {
+			return nil, fmt.Errorf("copy skill zip entry %q: %w", item.name, err)
+		}
+	}
+	entry, err := writer.Create(archiveName)
+	if err != nil {
+		return nil, fmt.Errorf("create skill zip entry %q: %w", archiveName, err)
+	}
+	if _, err := entry.Write(content); err != nil {
+		return nil, fmt.Errorf("write skill zip entry %q: %w", archiveName, err)
 	}
 	if err := writer.Close(); err != nil {
 		return nil, fmt.Errorf("close skill zip: %w", err)

@@ -449,16 +449,9 @@ func (s *TenantSkillService) ReadCatalogFile(
 func (s *TenantSkillService) UpdateCatalogFile(
 	ctx context.Context, tenantID uint64, catalogID, relativePath, content string,
 ) (*SkillFileContent, error) {
-	clean, err := safeSkillFilePath(relativePath)
+	clean, newBody, err := validateCatalogTextFile(relativePath, content)
 	if err != nil {
-		return nil, apperrors.NewBadRequestError(err.Error())
-	}
-	newBody := []byte(content)
-	if len(newBody) > skillFileTextLimit {
-		return nil, apperrors.NewBadRequestError("skill file content is larger than 1 MiB")
-	}
-	if skillFileLooksBinary(newBody) {
-		return nil, apperrors.NewBadRequestError("skill file content must be UTF-8 text")
+		return nil, err
 	}
 
 	catalog, err := s.skills.GetCatalog(ctx, tenantID, strings.TrimSpace(catalogID))
@@ -503,6 +496,63 @@ func (s *TenantSkillService) UpdateCatalogFile(
 		return nil, fmt.Errorf("catalog ID changed while updating skill file")
 	}
 	return projectSkillFileContent(clean, newBody), nil
+}
+
+// CreateCatalogFile adds one UTF-8 text file to the catalog bundle. Existing
+// sandbox installations keep their stored bundle and snapshot unchanged.
+func (s *TenantSkillService) CreateCatalogFile(
+	ctx context.Context, tenantID uint64, catalogID, relativePath, content string,
+) (*SkillFileContent, error) {
+	clean, newBody, err := validateCatalogTextFile(relativePath, content)
+	if err != nil {
+		return nil, err
+	}
+
+	catalog, err := s.skills.GetCatalog(ctx, tenantID, strings.TrimSpace(catalogID))
+	if err != nil {
+		return nil, err
+	}
+	if catalog == nil {
+		return nil, apperrors.NewNotFoundError("skill not found")
+	}
+	archive, err := s.catalogBundleArchive(ctx, tenantID, catalog)
+	if err != nil {
+		return nil, err
+	}
+	updatedArchive, err := addSkillZipFile(archive, clean, newBody)
+	if errors.Is(err, errSkillFileExists) {
+		return nil, apperrors.NewConflictError("skill file already exists")
+	}
+	if err != nil {
+		return nil, err
+	}
+	bundle, err := ParseSkillBundle(updatedArchive)
+	if err != nil {
+		return nil, err
+	}
+	updated, err := s.upsertCatalogFromBundle(ctx, tenantID, bundle, updatedArchive, true)
+	if err != nil {
+		return nil, err
+	}
+	if updated == nil || updated.ID != catalog.ID {
+		return nil, fmt.Errorf("catalog ID changed while creating skill file")
+	}
+	return projectSkillFileContent(clean, newBody), nil
+}
+
+func validateCatalogTextFile(relativePath, content string) (string, []byte, error) {
+	clean, err := safeSkillFilePath(relativePath)
+	if err != nil {
+		return "", nil, apperrors.NewBadRequestError(err.Error())
+	}
+	body := []byte(content)
+	if len(body) > skillFileTextLimit {
+		return "", nil, apperrors.NewBadRequestError("skill file content is larger than 1 MiB")
+	}
+	if skillFileLooksBinary(body) {
+		return "", nil, apperrors.NewBadRequestError("skill file content must be UTF-8 text")
+	}
+	return clean, body, nil
 }
 
 func (s *TenantSkillService) loadCatalogArchive(

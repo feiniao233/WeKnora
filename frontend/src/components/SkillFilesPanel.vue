@@ -803,6 +803,11 @@ watch(
   color: var(--td-text-color-primary);
   white-space: pre-wrap;
   word-break: break-word;
+
+  :deep(.hljs) {
+    padding: 0;
+    background: transparent;
+  }
 }
 
 .skill-files-panel__markdown {

@@ -491,6 +491,26 @@ func buildMessageExecutionContext(
 		snapshot.AgentConfigHash = fmt.Sprintf("%x", hash[:])
 	}
 
+	// Hash the resolved configuration, including prompt configuration. Only its
+	// digest is saved: never persist prompt text or expose authorization scope.
+	// Do not reuse AgentConfigHash, whose narrower scope is a cache contract.
+	config := agent.Config
+	config.ModelID = modelID
+	executionInput := struct {
+		Config  types.CustomAgentConfig       `json:"config"`
+		Request types.MessageExecutionContext `json:"request"`
+	}{Config: config, Request: snapshot}
+	// Tracing and recommendation cache internals are not execution configuration.
+	executionInput.Request.LangfuseTraceparent = ""
+	executionInput.Request.AgentConfigHash = ""
+	if encoded, err := json.Marshal(executionInput); err == nil {
+		hash := sha256.Sum256(encoded)
+		snapshot.ExecutionConfigHash = fmt.Sprintf("sha256-v1:%x", hash[:])
+	}
+	snapshot.SkillsSelectionMode = config.SkillsSelectionMode
+	snapshot.SelectedSkillNames = append([]string(nil), config.SelectedSkills...)
+	snapshot.SkillNames = append([]string(nil), skillNames...)
+
 	return snapshot, agent.ID, agentTenantID, modelID
 }
 

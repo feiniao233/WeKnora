@@ -307,6 +307,8 @@ type Message struct {
 	// ExecutionContext stores the non-secret per-turn scope required to safely
 	// generate contextual follow-up questions after the main stream completes.
 	ExecutionContext MessageExecutionContext `json:"-" gorm:"type:jsonb;column:execution_context"`
+	// ExecutionProvenance is populated only for history responses from the saved snapshot.
+	ExecutionProvenance *MessageExecutionProvenance `json:"execution_provenance,omitempty" gorm:"-"`
 	// KnowledgeID links this message to a Knowledge entry in the chat history knowledge base
 	// Used for vector search indexing: when set, the message content has been indexed as a Knowledge passage
 	KnowledgeID string `json:"knowledge_id,omitempty" gorm:"type:varchar(36);index"`
@@ -323,9 +325,24 @@ type Message struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at"            gorm:"index"`
 }
 
+// MessageExecutionProvenance describes configuration at turn submission, not the
+// rendered prompt, model weights, Skill contents, or proof that a Skill ran.
+// Agent/model bindings remain in Message.AgentID and Message.ModelID.
+type MessageExecutionProvenance struct {
+	ExecutionConfigHash string   `json:"execution_config_hash"`
+	SkillsSelectionMode string   `json:"skills_selection_mode,omitempty"`
+	SelectedSkillNames  []string `json:"selected_skill_names,omitempty"`
+	RequestedSkillNames []string `json:"requested_skill_names,omitempty"`
+}
+
 // MessageExecutionContext is a message-level snapshot of the non-secret
 // request state used by derived experiences such as follow-up suggestions.
 type MessageExecutionContext struct {
+	// ExecutionConfigHash is sha256-v1 of the resolved agent configuration and
+	// per-request overrides/scope; distinct from the suggestion-cache hash below.
+	ExecutionConfigHash   string                    `json:"execution_config_hash,omitempty"`
+	SkillsSelectionMode   string                    `json:"skills_selection_mode,omitempty"`
+	SelectedSkillNames    []string                  `json:"selected_skill_names,omitempty"`
 	AgentConfigHash       string                    `json:"agent_config_hash,omitempty"`
 	QuestionSuggestions   *QuestionSuggestionConfig `json:"question_suggestions,omitempty"`
 	KnowledgeBaseIDs      []string                  `json:"knowledge_base_ids,omitempty"`

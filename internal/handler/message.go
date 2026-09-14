@@ -133,7 +133,7 @@ func (h *MessageHandler) LoadMessages(c *gin.Context) {
 		)
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
-			"data":    rewriter.RewriteMessagesResponse(ctx, messages),
+			"data":    rewriter.RewriteMessagesResponse(ctx, messagesWithExecutionProvenance(messages)),
 		})
 		return
 	}
@@ -173,7 +173,7 @@ func (h *MessageHandler) LoadMessages(c *gin.Context) {
 	)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    rewriter.RewriteMessagesResponse(ctx, messages),
+		"data":    rewriter.RewriteMessagesResponse(ctx, messagesWithExecutionProvenance(messages)),
 	})
 }
 
@@ -343,4 +343,32 @@ func parseMessageBeforeTime(raw string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, lastErr
+}
+
+// messagesWithExecutionProvenance projects an allow-list before public URL mode
+// JSON-clones messages (which intentionally drops ExecutionContext). Never look
+// up today's agent to fill missing historical snapshots or mutate cached rows.
+func messagesWithExecutionProvenance(messages []*types.Message) []*types.Message {
+	if messages == nil {
+		return nil
+	}
+	out := make([]*types.Message, len(messages))
+	for i, message := range messages {
+		if message == nil {
+			continue
+		}
+		copy := *message
+		copy.ExecutionProvenance = nil
+		snapshot := message.ExecutionContext
+		if message.Role == "assistant" && snapshot.ExecutionConfigHash != "" {
+			copy.ExecutionProvenance = &types.MessageExecutionProvenance{
+				ExecutionConfigHash: snapshot.ExecutionConfigHash,
+				SkillsSelectionMode: snapshot.SkillsSelectionMode,
+				SelectedSkillNames:  append([]string(nil), snapshot.SelectedSkillNames...),
+				RequestedSkillNames: append([]string(nil), snapshot.SkillNames...),
+			}
+		}
+		out[i] = &copy
+	}
+	return out
 }

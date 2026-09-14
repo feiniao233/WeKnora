@@ -72,6 +72,32 @@ func TestDockerIdleSweeperFallsBackToCreationTime(t *testing.T) {
 	require.Empty(t, engine.removed)
 }
 
+// A committed sandbox image can contain an old activity marker. The first
+// sweep may race the entrypoint that refreshes it, so a new container must get
+// its own idle TTL rather than inherit the snapshot's age.
+func TestDockerIdleSweeperBoundsSnapshotActivityByCreationTime(t *testing.T) {
+	now := time.Date(2026, time.September, 14, 9, 0, 0, 0, time.UTC)
+	ttl := 30 * time.Minute
+	sweeper, engine := newSweeperFixture(t, ttl, now, []container.Summary{
+		{
+			ID: "from-snapshot", State: "running", Created: now.Unix(),
+			Labels: map[string]string{dockerManagedLabel: "true"},
+		},
+	})
+	engine.statResult[dockerActivityMarker] = container.PathStat{Mtime: now.Add(-24 * time.Hour)}
+
+	reclaimed, err := sweeper.sweep(context.Background())
+	require.NoError(t, err)
+	require.Zero(t, reclaimed, "an inherited marker must not immediately expire a new sandbox")
+	require.Empty(t, engine.removed)
+
+	sweeper.now = func() time.Time { return now.Add(ttl + time.Second) }
+	reclaimed, err = sweeper.sweep(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, reclaimed, "an unused sandbox must still expire after its own TTL")
+	require.Equal(t, []string{"from-snapshot"}, engine.removed)
+}
+
 // The marker has to be writable by the unprivileged sandbox account, so a
 // script can backdate or postdate it. Postdating is the dangerous direction: a
 // single `touch -d 2099-01-01` would otherwise exempt the container from

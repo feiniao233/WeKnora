@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,9 +29,10 @@ func (c *RemoteAPIChat) parseCompletionResponse(resp *openai.ChatCompletionRespo
 
 	usage := tokenUsageFromOpenAI(resp.Usage, c.provider)
 	response := &types.ChatResponse{
-		Content:      content,
-		FinishReason: string(choice.FinishReason),
-		Usage:        usage,
+		Content:          content,
+		ReasoningContent: choice.Message.ReasoningContent,
+		FinishReason:     string(choice.FinishReason),
+		Usage:            usage,
 	}
 
 	if len(choice.Message.ToolCalls) > 0 {
@@ -112,35 +114,23 @@ func (c *RemoteAPIChat) processStream(
 ) {
 	defer close(streamChan)
 	defer stream.Close()
+	stopClose := context.AfterFunc(ctx, func() { _ = stream.Close() })
+	defer stopClose()
 
 	state := newStreamState()
 
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		response, err := stream.Recv()
 		if err != nil {
-			if err == io.EOF {
-				logUsage(ctx, c.modelName, state.usage)
-				toolCalls := state.buildOrderedToolCalls()
-				streamChan <- types.StreamResponse{
-					ResponseType: types.ResponseTypeAnswer,
-					Content:      "",
-					Done:         true,
-					ToolCalls:    toolCalls,
-					Usage:        state.usage,
-					FinishReason: state.lastFinishReason,
-				}
-			} else {
-				logger.Errorf(ctx, "Stream read error: %v (tool_calls_assembled=%d)",
-					err, len(state.toolCallMap))
-				streamChan <- types.StreamResponse{
-					ResponseType: types.ResponseTypeError,
-					Content:      err.Error(),
-					Done:         true,
-					ToolCalls:    state.buildOrderedToolCalls(),
-					Usage:        state.usage,
-					FinishReason: types.FinishReasonIncomplete,
-				}
+			if errors.Is(err, io.EOF) && state.lastFinishReason != "" {
+				err = nil
+			} else if errors.Is(err, io.EOF) {
+				err = io.ErrUnexpectedEOF
 			}
+			c.finishStream(ctx, state, streamChan, err)
 			return
 		}
 
@@ -168,35 +158,24 @@ func (c *RemoteAPIChat) processRawHTTPStream(
 ) {
 	defer close(streamChan)
 	defer resp.Body.Close()
+	stopClose := context.AfterFunc(ctx, func() { _ = resp.Body.Close() })
+	defer stopClose()
 
 	state := newStreamState()
 	reader := NewSSEReader(resp.Body)
 
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		event, err := reader.ReadEvent()
 		if err != nil {
-			if err == io.EOF {
-				logUsage(ctx, c.modelName, state.usage)
-				toolCalls := state.buildOrderedToolCalls()
-				streamChan <- types.StreamResponse{
-					ResponseType: types.ResponseTypeAnswer,
-					Content:      "",
-					Done:         true,
-					ToolCalls:    toolCalls,
-					Usage:        state.usage,
-				}
-			} else {
-				logger.Errorf(ctx, "Stream read error: %v (tool_calls_assembled=%d)",
-					err, len(state.toolCallMap))
-				streamChan <- types.StreamResponse{
-					ResponseType: types.ResponseTypeError,
-					Content:      err.Error(),
-					Done:         true,
-					ToolCalls:    state.buildOrderedToolCalls(),
-					Usage:        state.usage,
-					FinishReason: types.FinishReasonIncomplete,
-				}
+			if errors.Is(err, io.EOF) && state.lastFinishReason != "" {
+				err = nil
+			} else if errors.Is(err, io.EOF) {
+				err = io.ErrUnexpectedEOF
 			}
+			c.finishStream(ctx, state, streamChan, err)
 			return
 		}
 
@@ -204,16 +183,8 @@ func (c *RemoteAPIChat) processRawHTTPStream(
 			continue
 		}
 
-		if event.Done {
-			logUsage(ctx, c.modelName, state.usage)
-			toolCalls := state.buildOrderedToolCalls()
-			streamChan <- types.StreamResponse{
-				ResponseType: types.ResponseTypeAnswer,
-				Content:      "",
-				Done:         true,
-				ToolCalls:    toolCalls,
-				Usage:        state.usage,
-			}
+		if event.Done || strings.TrimSpace(string(event.Data)) == "[DONE]" {
+			c.finishStream(ctx, state, streamChan, nil)
 			return
 		}
 
@@ -231,6 +202,7 @@ func (c *RemoteAPIChat) processRawHTTPStream(
 		// 使用局部结构体进行一次性解析，同时捕捉标准字段和 vLLM 的 reasoning 字段，避免性能损失
 		var streamResp struct {
 			openai.ChatCompletionStreamResponse
+			Error   json.RawMessage `json:"error"`
 			Choices []struct {
 				Index int `json:"index"`
 				Delta struct {
@@ -242,14 +214,23 @@ func (c *RemoteAPIChat) processRawHTTPStream(
 		}
 
 		if err := json.Unmarshal(event.Data, &streamResp); err != nil {
-			logger.Errorf(ctx, "Failed to parse stream response: %v", err)
-			continue
+			c.finishStream(ctx, state, streamChan, fmt.Errorf("invalid request: malformed model stream JSON"))
+			return
 		}
 
 		if streamResp.Usage != nil {
 			usage := tokenUsageFromOpenAI(*streamResp.Usage, c.provider)
 			applyRawPromptCacheUsage(event.Data, &usage)
 			state.usage = &usage
+		}
+
+		if len(streamResp.Error) != 0 && string(streamResp.Error) != "null" {
+			c.finishStream(ctx, state, streamChan, providerStreamError(streamResp.Error))
+			return
+		}
+		if streamResp.Choices == nil && streamResp.Usage == nil {
+			c.finishStream(ctx, state, streamChan, fmt.Errorf("invalid request: model stream event has no choices or usage"))
+			return
 		}
 
 		if len(streamResp.Choices) > 0 {
@@ -432,7 +413,7 @@ func (c *RemoteAPIChat) processStreamDelta(
 				"(len=%d, preview=%q, elapsed_ms=%d)",
 				len(reasoningContent), truncateForDebug(reasoningContent, 80), state.elapsedMs())
 		}
-		state.emit(streamChan, reasoningContent)
+		state.emitContext(ctx, streamChan, reasoningContent)
 	}
 
 	// 发送回答内容
@@ -449,42 +430,24 @@ func (c *RemoteAPIChat) processStreamDelta(
 		}
 		// If we had thinking content and this is the first answer chunk,
 		// send a thinking done event first.
-		state.finish(streamChan)
-		streamChan <- types.StreamResponse{
+		state.finishContext(ctx, streamChan)
+		if !sendStreamResponse(ctx, streamChan, types.StreamResponse{
 			ResponseType: types.ResponseTypeAnswer,
 			Content:      delta.Content,
-			Done:         isDone,
+			Done:         false,
 			ToolCalls:    state.buildOrderedToolCalls(),
 			FinishReason: string(choice.FinishReason),
+		}) {
+			return
 		}
 	}
 
-	if isDone && len(state.toolCallMap) > 0 {
-		streamChan <- types.StreamResponse{
-			ResponseType: types.ResponseTypeAnswer,
-			Content:      "",
-			Done:         true,
-			ToolCalls:    state.buildOrderedToolCalls(),
-			FinishReason: string(choice.FinishReason),
-		}
-	}
-
-	// Ensure thinking done is sent when stream finishes without any answer content
-	// (e.g., model only produced reasoning then hit finish_reason with empty content).
+	// Only the stream reader emits the terminal answer after consuming the usage
+	// tail. A finish_reason delta can still be followed by a transport failure.
 	if isDone {
-		state.finish(streamChan)
+		state.finishContext(ctx, streamChan)
 	}
 
-	// Catch-all: isDone but none of the above branches sent a response with
-	// FinishReason (empty content, no tool calls, no thinking). This prevents
-	// the finish_reason from being lost in the streaming pipeline.
-	if isDone && delta.Content == "" && len(state.toolCallMap) == 0 {
-		streamChan <- types.StreamResponse{
-			ResponseType: types.ResponseTypeAnswer,
-			Done:         true,
-			FinishReason: string(choice.FinishReason),
-		}
-	}
 }
 
 // processToolCallsDelta 处理 tool calls 的增量更新
@@ -583,16 +546,18 @@ func (c *RemoteAPIChat) processToolCallsDelta(
 			if progressArgs != nil {
 				data["arguments"] = progressArgs
 			}
-			streamChan <- types.StreamResponse{
+			if !sendStreamResponse(ctx, streamChan, types.StreamResponse{
 				ResponseType: types.ResponseTypeToolCall,
 				Content:      "",
 				Done:         false,
 				Data:         data,
+			}) {
+				return
 			}
 			state.nameNotified[toolCallIndex] = true
 			progressArgs = nil
 		} else if progressArgs != nil && toolCallEntry.ID != "" && currName != "" {
-			streamChan <- types.StreamResponse{
+			if !sendStreamResponse(ctx, streamChan, types.StreamResponse{
 				ResponseType: types.ResponseTypeToolCall,
 				Content:      "",
 				Done:         false,
@@ -601,6 +566,8 @@ func (c *RemoteAPIChat) processToolCallsDelta(
 					"tool_call_id": toolCallEntry.ID,
 					"arguments":    progressArgs,
 				},
+			}) {
+				return
 			}
 		}
 
@@ -615,7 +582,7 @@ func (c *RemoteAPIChat) processToolCallsDelta(
 			}
 			thoughtChunk := extractor.Feed(tc.Function.Arguments)
 			if thoughtChunk != "" {
-				streamChan <- types.StreamResponse{
+				if !sendStreamResponse(ctx, streamChan, types.StreamResponse{
 					ResponseType: types.ResponseTypeThinking,
 					Content:      thoughtChunk,
 					Done:         false,
@@ -623,8 +590,40 @@ func (c *RemoteAPIChat) processToolCallsDelta(
 						"source":       "thinking_tool",
 						"tool_call_id": toolCallEntry.ID,
 					},
+				}) {
+					return
 				}
 			}
 		}
 	}
+}
+
+// The final result keeps assembled tool calls and usage even on a broken stream.
+func (c *RemoteAPIChat) finishStream(ctx context.Context, state *streamState, ch chan types.StreamResponse, err error) {
+	if ctx.Err() != nil {
+		return
+	}
+	response := types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Done: true, ToolCalls: state.buildOrderedToolCalls(), Usage: state.usage, FinishReason: state.lastFinishReason}
+	if err != nil {
+		response.ResponseType = types.ResponseTypeError
+		response.Content = err.Error()
+		response.FinishReason = types.FinishReasonIncomplete
+	} else {
+		state.finishContext(ctx, ch)
+		logUsage(ctx, c.modelName, state.usage)
+	}
+	sendStreamResponse(ctx, ch, response)
+}
+
+// Keep only known error categories from a provider's event. Provider messages
+// can echo request content or credentials and must not enter observations.
+func providerStreamError(raw json.RawMessage) error {
+	var e struct {
+		Code    any    `json:"code"`
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(raw, &e)
+	failure := types.ClassifyExecutionError(fmt.Sprintf("%v %s %s", e.Code, e.Type, e.Message), "")
+	return fmt.Errorf("model stream error: %s", failure.Code)
 }

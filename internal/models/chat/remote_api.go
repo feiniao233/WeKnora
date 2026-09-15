@@ -289,7 +289,7 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 	}
 	if useRawHTTP {
 		ch, err := c.chatStreamWithRawHTTP(timeoutCtx, endpoint, body, opts)
-		return wrapStreamCancel(ch, err, cancel)
+		return wrapStreamCancel(timeoutCtx, ch, err, cancel)
 	}
 
 	req := *(body.(*openai.ChatCompletionRequest))
@@ -330,7 +330,7 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 
 // wrapStreamCancel 在子 channel 关闭后执行 cancel，避免 timeout context 泄漏。
 // 当底层调用直接返回 error 时，立即调用 cancel 并将 error 透出。
-func wrapStreamCancel(in <-chan types.StreamResponse, err error, cancel context.CancelFunc) (<-chan types.StreamResponse, error) {
+func wrapStreamCancel(ctx context.Context, in <-chan types.StreamResponse, err error, cancel context.CancelFunc) (<-chan types.StreamResponse, error) {
 	if err != nil {
 		cancel()
 		return nil, err
@@ -339,8 +339,18 @@ func wrapStreamCancel(in <-chan types.StreamResponse, err error, cancel context.
 	go func() {
 		defer cancel()
 		defer close(out)
-		for v := range in {
-			out <- v
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case v, ok := <-in:
+				if !ok {
+					return
+				}
+				if !sendStreamResponse(ctx, out, v) {
+					return
+				}
+			}
 		}
 	}()
 	return out, nil

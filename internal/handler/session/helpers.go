@@ -316,20 +316,28 @@ func (h *Handler) setupStreamHandler(
 
 // setupStopEventHandler registers a stop event handler
 func (h *Handler) setupStopEventHandler(
+	executionCtx context.Context,
 	eventBus *event.EventBus,
 	sessionID string,
 	sessionTenantID uint64,
 	assistantMessage *types.Message,
 	cancel context.CancelFunc,
+	persistOnStop bool,
 ) {
 	eventBus.On(event.EventStop, func(ctx context.Context, evt event.Event) error {
 		logger.Infof(ctx, "Received stop event, cancelling async operations for session: %s", sessionID)
+		recordExecutionStop(executionCtx)
 		cancel()
+		// AgentQA joins its stream before its final save, preserving all partial
+		// steps without racing this stop callback against message mutation.
+		if !persistOnStop {
+			return nil
+		}
 		// Preserve whatever has been streamed so far; do not overwrite Content.
 		// Use session's tenant for message update (ctx may have effectiveTenantID when using shared agent).
 		// Use WithoutCancel so the GORM UPDATE survives the upcoming ctx.Done triggered by cancel()/client disconnect.
 		updateCtx := context.WithValue(
-			context.WithoutCancel(ctx),
+			context.WithoutCancel(executionCtx),
 			types.TenantIDContextKey, sessionTenantID,
 		)
 		h.completeAssistantMessage(updateCtx, assistantMessage, "", "") // empty query: stopped conversations are not indexed

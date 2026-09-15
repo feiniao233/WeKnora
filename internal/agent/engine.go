@@ -332,16 +332,6 @@ func (e *AgentEngine) Execute(
 	_, err := e.executeLoop(ctx, state, query, messages, tools, sessionID, messageID)
 	if err != nil {
 		logger.Errorf(ctx, "[Agent] Execution failed: %v", err)
-		e.eventBus.Emit(ctx, event.Event{
-			ID:        generateEventID("error"),
-			Type:      event.EventError,
-			SessionID: sessionID,
-			Data: event.ErrorData{
-				Error:     err.Error(),
-				Stage:     "agent_execution",
-				SessionID: sessionID,
-			},
-		})
 		finishAgentSpan(agentSpan, state, err)
 		return nil, err
 	}
@@ -433,7 +423,7 @@ func (e *AgentEngine) executeLoop(
 	tools []chat.Tool,
 	sessionID string,
 	messageID string,
-) (*types.AgentState, error) {
+) (_ *types.AgentState, loopErr error) {
 	startTime := time.Now()
 	common.PipelineInfo(ctx, "Agent", "loop_start", map[string]interface{}{
 		"max_iterations": e.config.MaxIterations,
@@ -454,7 +444,17 @@ func (e *AgentEngine) executeLoop(
 		completionEmitted = true
 		e.emitCompletionEvent(context.WithoutCancel(ctx), state, sessionID, messageID, startTime)
 	}
-	defer emitCompletion()
+	defer func() {
+		// A transport may stop reading at complete. Publish failures first,
+		// while still emitting completion to preserve partial steps and usage.
+		if loopErr != nil && ctx.Err() != context.Canceled {
+			_ = e.eventBus.Emit(context.WithoutCancel(ctx), event.Event{
+				ID: generateEventID("error"), Type: event.EventError, SessionID: sessionID,
+				Data: event.ErrorData{Error: loopErr.Error(), Stage: "agent_execution", SessionID: sessionID},
+			})
+		}
+		emitCompletion()
+	}()
 
 	emptyRetries := 0
 	consecutiveSameContent := 0

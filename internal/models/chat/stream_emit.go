@@ -1,6 +1,9 @@
 package chat
 
-import "github.com/Tencent/WeKnora/internal/types"
+import (
+	"context"
+	"github.com/Tencent/WeKnora/internal/types"
+)
 
 // thinkingEmitter owns the "reasoning then answer" hand-off that every
 // streaming Chat implementation shares: thinking chunks are forwarded as they
@@ -33,4 +36,29 @@ func (e *thinkingEmitter) finish(ch chan types.StreamResponse) {
 		ResponseType: types.ResponseTypeThinking,
 		Done:         true,
 	}
+}
+
+func sendStreamResponse(ctx context.Context, ch chan types.StreamResponse, response types.StreamResponse) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+	}
+	select {
+	case ch <- response:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+func (e *thinkingEmitter) emitContext(ctx context.Context, ch chan types.StreamResponse, content string) {
+	e.active = true
+	sendStreamResponse(ctx, ch, types.StreamResponse{ResponseType: types.ResponseTypeThinking, Content: content})
+}
+func (e *thinkingEmitter) finishContext(ctx context.Context, ch chan types.StreamResponse) {
+	if !e.active {
+		return
+	}
+	e.active = false
+	sendStreamResponse(ctx, ch, types.StreamResponse{ResponseType: types.ResponseTypeThinking, Done: true})
 }

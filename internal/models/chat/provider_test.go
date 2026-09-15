@@ -145,14 +145,14 @@ func TestBuildOutbound_Thinking(t *testing.T) {
 func TestBuildOutbound_ShapeRequest(t *testing.T) {
 	msgs := []Message{{Role: "user", Content: "hi"}}
 
-	t.Run("deepseek strips tool_choice", func(t *testing.T) {
+	t.Run("deepseek preserves automatic tool_choice", func(t *testing.T) {
 		c := newOutboundChat(t, string(provider.ProviderDeepSeek), "deepseek-chat", nil)
 		body, _, useRaw, err := c.buildOutbound(context.Background(), msgs, &ChatOptions{ToolChoice: "auto"}, false)
 		require.NoError(t, err)
 		assert.True(t, useRaw)
 		request, ok := body.(map[string]any)
 		require.True(t, ok)
-		assert.NotContains(t, request, "tool_choice")
+		assert.Equal(t, "auto", request["tool_choice"])
 	})
 
 	t.Run("moonshot pins temperature to 1", func(t *testing.T) {

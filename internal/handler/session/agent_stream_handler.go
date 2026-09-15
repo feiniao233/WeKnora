@@ -44,6 +44,10 @@ type AgentStreamHandler struct {
 	answerSegments  []*answerSegment     // Per-answer-event-ID accumulation, so superseded preambles can be dropped
 	eventStartTimes map[string]time.Time // Track start time for duration calculation
 	mu              sync.Mutex
+	// The HTTP handler releases completion only after the message is saved.
+	deferCompletion   bool
+	pendingCompletion *interfaces.StreamEvent
+	completionFlushed bool
 }
 
 // answerSegment accumulates the streamed content of a single final-answer event
@@ -597,17 +601,28 @@ func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) e
 		return nil
 	}
 
-	// Build error metadata
+	failure := types.ClassifyExecutionError(data.Error, h.requestID)
+	toolCallID, _ := data.Extra["tool_call_id"].(string)
+	if toolCallID == "" && !recordExecutionFailure(h.ctx, failure) {
+		return nil
+	}
+	// Only safe classifications cross the browser/history boundary.
 	metadata := map[string]interface{}{
-		"stage": data.Stage,
-		"error": data.Error,
+		"stage":      data.Stage,
+		"error":      failure.Message,
+		"code":       failure.Code,
+		"retryable":  failure.Retryable,
+		"request_id": h.requestID,
+	}
+	if toolCallID != "" {
+		metadata["tool_call_id"] = toolCallID
 	}
 
 	// Append error event to stream
 	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
 		ID:        evt.ID,
 		Type:      types.ResponseTypeError,
-		Content:   data.Error,
+		Content:   failure.Message,
 		Done:      true,
 		Timestamp: time.Now(),
 		Data:      metadata,
@@ -673,7 +688,11 @@ func (h *AgentStreamHandler) handleComplete(ctx context.Context, evt event.Event
 			h.assistantMessage.KnowledgeReferences = knowledgeRefs
 		}
 
-		h.assistantMessage.Content += data.FinalAnswer
+		if data.FinalAnswer != "" {
+			h.assistantMessage.Content = data.FinalAnswer
+		} else if h.finalAnswer != "" {
+			h.assistantMessage.Content = h.finalAnswer
+		}
 
 		// Update agent steps if provided
 		if data.AgentSteps != nil {
@@ -785,7 +804,7 @@ func (h *AgentStreamHandler) handleComplete(ctx context.Context, evt event.Event
 	if turnUsage != nil {
 		completeData["usage"] = turnUsage
 	}
-	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, interfaces.StreamEvent{
+	completion := interfaces.StreamEvent{
 		ID:        evt.ID,
 		Type:      types.ResponseTypeComplete,
 		Content:   "",
@@ -793,11 +812,44 @@ func (h *AgentStreamHandler) handleComplete(ctx context.Context, evt event.Event
 		Timestamp: time.Now(),
 		Data:      completeData,
 		Usage:     turnUsage,
-	}); err != nil {
+	}
+	if h.deferCompletion {
+		h.pendingCompletion = &completion
+		return nil
+	}
+	if err := h.streamManager.AppendEvent(h.ctx, h.sessionID, h.assistantMessageID, completion); err != nil {
 		logger.GetLogger(h.ctx).Errorf("Append complete event to stream failed: %v", err)
 	}
 
 	return nil
+}
+
+// flushCompletion is called after durable message finalization, including
+// early failures for which the agent never emitted a completion event.
+func (h *AgentStreamHandler) flushCompletion(ctx context.Context) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.completionFlushed {
+		return nil
+	}
+	completion := h.pendingCompletion
+	if completion == nil {
+		completion = &interfaces.StreamEvent{ID: h.requestID, Type: types.ResponseTypeComplete, Done: true, Timestamp: time.Now()}
+	}
+	if completion.Data == nil {
+		completion.Data = map[string]interface{}{}
+	}
+	// A failed save may have recorded an error after the last message snapshot.
+	// Report that failure truthfully even when the database is unavailable.
+	completion.Data["execution_result"] = executionResult(h.ctx)
+	completion.Data["model_id"] = h.assistantMessage.ModelID
+	completion.Data["request_id"] = h.requestID
+	err := h.streamManager.AppendEvent(ctx, h.sessionID, h.assistantMessageID, *completion)
+	if err == nil {
+		h.pendingCompletion = nil
+		h.completionFlushed = true
+	}
+	return err
 }
 
 // emitArtifactsPending tells the live UI that sandbox files exist and are

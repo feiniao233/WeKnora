@@ -105,6 +105,17 @@ func (s *sessionService) resolveChatModelID(
 	session := req.Session
 	configuredAgentModelID := ""
 
+	// An explicit per-turn model is authoritative. Resolve it before the
+	// agent default so a broken default can be recovered without editing the
+	// shared agent configuration. Never silently run a different model.
+	if summaryModelID = strings.TrimSpace(summaryModelID); summaryModelID != "" {
+		model, err := s.modelService.GetModelByID(ctx, summaryModelID)
+		if err != nil || model == nil || model.Type != types.ModelTypeKnowledgeQA {
+			return "", fmt.Errorf("requested chat model is unavailable")
+		}
+		return summaryModelID, nil
+	}
+
 	if customAgent != nil {
 		configuredAgentModelID = strings.TrimSpace(customAgent.Config.ModelID)
 		if configuredAgentModelID == "" && customAgent.ID != types.BuiltinWikiFixerID {
@@ -124,15 +135,6 @@ func (s *sessionService) resolveChatModelID(
 		}
 	}
 
-	summaryModelID = strings.TrimSpace(summaryModelID)
-	if summaryModelID != "" {
-		if model, err := s.modelService.GetModelByID(ctx, summaryModelID); err == nil && model != nil &&
-			model.Type == types.ModelTypeKnowledgeQA {
-			logger.Infof(ctx, "Using request's summary model override: %s", summaryModelID)
-			return summaryModelID, nil
-		}
-		logger.Warnf(ctx, "Request provided invalid summary model ID %s, falling back", summaryModelID)
-	}
 	if configuredAgentModelID != "" {
 		logger.Infof(ctx, "Using custom agent's model_id: %s", configuredAgentModelID)
 		return configuredAgentModelID, nil

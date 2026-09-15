@@ -141,17 +141,20 @@ func (lkeapProvider) Matches(model string) bool {
 }
 func (lkeapProvider) Thinking() ThinkingStrategy { return thinkingTypeField{} }
 
-// --- DeepSeek: does not support tool_choice ---
+// --- DeepSeek: native thinking with automatic tool choice ---
 
 type deepseekProvider struct{ baseProvider }
 
 func (deepseekProvider) Name() provider.ProviderName { return provider.ProviderDeepSeek }
+func (deepseekProvider) Thinking() ThinkingStrategy  { return thinkingTypeField{} }
 
 // Native DeepSeek cache counters are not represented by go-openai v1.41.2;
 // use the raw path so prompt_cache_hit_tokens/miss_tokens remain observable.
 func (deepseekProvider) ForceRawHTTP() bool { return true }
 func (deepseekProvider) ShapeRequest(req *openai.ChatCompletionRequest, opts *ChatOptions, _ bool) {
-	if opts != nil && opts.ToolChoice != "" {
+	// Native thinking mode rejects forced tool choices. Non-thinking mode
+	// supports them; honor the explicit switch instead of discarding it.
+	if opts != nil && opts.ToolChoice != "" && opts.ToolChoice != "auto" && opts.ToolChoice != "none" && (opts.Thinking == nil || *opts.Thinking) {
 		req.ToolChoice = nil
 	}
 }

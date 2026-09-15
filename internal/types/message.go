@@ -289,6 +289,9 @@ type Message struct {
 	// assistant message. Persisted so history reads can attribute cost after the
 	// live stream is gone; NULL (nil) for user messages and pre-feature rows.
 	Usage *TokenUsage `json:"usage,omitempty" gorm:"type:jsonb;column:usage"`
+	// ExecutionResult distinguishes a successful answer from a closed failed
+	// or stopped stream. NULL on older messages means the outcome is unknown.
+	ExecutionResult *MessageExecutionResult `json:"execution_result,omitempty" gorm:"type:jsonb;column:execution_result"`
 	// RenderedContent stores the full RAG-augmented user message (with retrieved context)
 	// sent to the LLM. Used to preserve retrieval context across conversation turns.
 	// Empty for non-retrieval intents or assistant messages.

@@ -631,10 +631,11 @@ type sseStreamContext struct {
 	asyncCtx         context.Context
 	cancel           context.CancelFunc
 	assistantMessage *types.Message
+	streamHandler    *AgentStreamHandler
 }
 
 // setupSSEStream sets up the SSE streaming context
-func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool) *sseStreamContext {
+func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, mode qaMode) *sseStreamContext {
 	// Set SSE headers
 	setSSEHeaders(reqCtx.c)
 
@@ -673,7 +674,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool) *
 
 	// Create EventBus and cancellable context
 	eventBus := event.NewEventBus()
-	asyncCtx, cancel := context.WithCancel(logger.CloneContext(baseCtx))
+	asyncCtx, cancel := context.WithCancel(withExecutionOutcome(logger.CloneContext(baseCtx)))
 
 	streamCtx := &sseStreamContext{
 		eventBus:         eventBus,
@@ -683,7 +684,7 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool) *
 	}
 
 	// Setup stop event handler
-	h.setupStopEventHandler(eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancel)
+	h.setupStopEventHandler(asyncCtx, eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancel, mode == qaModeNormal)
 
 	// Watch for stop events independently of the client SSE connection so a
 	// user-requested stop reliably cancels generation even when the client
@@ -697,14 +698,15 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool) *
 	h.startStopWatcher(logger.CloneContext(baseCtx), reqCtx.sessionID, reqCtx.assistantMessage.ID, eventBus)
 
 	// Setup stream handler
-	h.setupStreamHandler(asyncCtx, reqCtx.sessionID, reqCtx.assistantMessage.ID,
+	streamCtx.streamHandler = h.setupStreamHandler(asyncCtx, reqCtx.sessionID, reqCtx.assistantMessage.ID,
 		reqCtx.requestID, reqCtx.session.TenantID, reqCtx.receivedAt, reqCtx.assistantMessage, eventBus)
+	streamCtx.streamHandler.deferCompletion = true
 
 	// Generate title if needed
 	if generateTitle && reqCtx.session.Title == "" {
 		// Use the same model as the conversation for title generation
-		modelID := ""
-		if reqCtx.customAgent != nil && reqCtx.customAgent.Config.ModelID != "" {
+		modelID := reqCtx.summaryModelID
+		if modelID == "" && reqCtx.customAgent != nil && reqCtx.customAgent.Config.ModelID != "" {
 			modelID = reqCtx.customAgent.Config.ModelID
 		}
 		logger.Infof(reqCtx.ctx, "Session has no title, starting async title generation, session ID: %s, model: %s", reqCtx.sessionID, modelID)
@@ -966,7 +968,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	}
 
 	// Setup SSE stream
-	streamCtx := h.setupSSEStream(reqCtx, generateTitle)
+	streamCtx := h.setupSSEStream(reqCtx, generateTitle, mode)
 
 	// Normal mode: register completion handler on EventAgentFinalAnswer
 	// (Agent mode handles completion in the defer block instead)
@@ -1007,13 +1009,28 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				completionHandled = true
 
 				logger.Infof(streamCtx.asyncCtx, "Knowledge QA service completed for session: %s", sessionID)
-				updateCtx := context.WithValue(streamCtx.asyncCtx, types.TenantIDContextKey, reqCtx.session.TenantID)
-				h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query, reqCtx.userMessageID)
+				updateCtx := context.WithValue(context.WithoutCancel(streamCtx.asyncCtx), types.TenantIDContextKey, reqCtx.session.TenantID)
+				if err := h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query, reqCtx.userMessageID); err != nil {
+					_ = streamCtx.streamHandler.handleError(updateCtx, event.Event{Data: event.ErrorData{Error: "execution result could not be saved", Stage: "message_persistence"}})
+				}
 				streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
 					Type:      event.EventAgentComplete,
 					SessionID: sessionID,
 					Data:      event.AgentCompleteData{FinalAnswer: streamCtx.assistantMessage.Content},
 				})
+				_ = streamCtx.streamHandler.flushCompletion(context.WithoutCancel(streamCtx.asyncCtx))
+			}
+			return nil
+		})
+		// Quick-answer streaming can fail after KnowledgeQA has returned.
+		// Persist that outcome before releasing the stream's terminal marker.
+		streamCtx.eventBus.On(event.EventError, func(ctx context.Context, evt event.Event) error {
+			if result := executionResult(streamCtx.asyncCtx); result != nil && result.Status == "failed" {
+				updateCtx := context.WithValue(context.WithoutCancel(streamCtx.asyncCtx), types.TenantIDContextKey, reqCtx.session.TenantID)
+				if err := h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, "", ""); err != nil {
+					logger.Errorf(updateCtx, "Failed to persist assistant execution: %v", err)
+				}
+				return streamCtx.streamHandler.flushCompletion(updateCtx)
 			}
 			return nil
 		})
@@ -1032,6 +1049,10 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				logger.ErrorWithFields(streamCtx.asyncCtx,
 					errors.NewInternalServerError(fmt.Sprintf("%s service panicked: %v\n%s", stageName, r, string(buf))),
 					map[string]interface{}{"session_id": sessionID})
+				_ = streamCtx.eventBus.Emit(context.WithoutCancel(streamCtx.asyncCtx), event.Event{
+					Type: event.EventError, SessionID: sessionID,
+					Data: event.ErrorData{Error: "diagnosis execution failed", Stage: "agent_execution", SessionID: sessionID},
+				})
 			}
 			// Agent mode: complete the assistant message in defer (normal mode does it via event handler)
 			if mode == qaModeAgent {
@@ -1044,7 +1065,16 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 					context.WithoutCancel(streamCtx.asyncCtx),
 					types.TenantIDContextKey, reqCtx.session.TenantID,
 				)
-				h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query, reqCtx.userMessageID)
+				if streamCtx.asyncCtx.Err() == context.Canceled {
+					recordExecutionStop(streamCtx.asyncCtx)
+				} else if streamCtx.asyncCtx.Err() != nil {
+					_ = streamCtx.streamHandler.handleError(updateCtx, event.Event{Data: event.ErrorData{Error: streamCtx.asyncCtx.Err().Error(), Stage: "agent_execution"}})
+				}
+				if err := h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query, reqCtx.userMessageID); err != nil {
+					logger.Errorf(updateCtx, "Failed to persist assistant execution: %v", err)
+					_ = streamCtx.streamHandler.handleError(updateCtx, event.Event{Data: event.ErrorData{Error: "execution result could not be saved", Stage: "message_persistence"}})
+				}
+				_ = streamCtx.streamHandler.flushCompletion(updateCtx)
 				logger.Infof(streamCtx.asyncCtx, "Agent QA service completed for session: %s", sessionID)
 			}
 		}()
@@ -1074,7 +1104,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 			// context cancellation. That is an expected outcome, not a failure:
 			// the stop event already notifies the client, so don't emit a
 			// spurious error event (which would otherwise show an error toast).
-			if streamCtx.asyncCtx.Err() != nil {
+			if streamCtx.asyncCtx.Err() == context.Canceled {
 				logger.Infof(streamCtx.asyncCtx, "QA cancelled by user stop for session: %s", sessionID)
 			} else {
 				logger.ErrorWithFields(streamCtx.asyncCtx, serviceErr, nil)
@@ -1451,10 +1481,18 @@ func appendQuickAnswerReasoning(msg *types.Message, content string) {
 // and asynchronously indexes the Q&A pair into the chat history knowledge base.
 func (h *Handler) completeAssistantMessage(
 	ctx context.Context, assistantMessage *types.Message, userQuery, userMessageID string,
-) {
+) error {
 	assistantMessage.UpdatedAt = time.Now()
 	assistantMessage.IsCompleted = true
-	_ = h.messageService.UpdateMessage(ctx, assistantMessage)
+	if result := executionResult(ctx); result != nil {
+		assistantMessage.ExecutionResult = result
+	}
+	if err := h.messageService.UpdateMessage(ctx, assistantMessage); err != nil {
+		return err
+	}
+	if assistantMessage.ExecutionResult != nil && assistantMessage.ExecutionResult.Status != "completed" {
+		return nil
+	}
 
 	// Asynchronously index the Q&A pair into the chat history knowledge base for vector search.
 	// Use WithoutCancel so the goroutine survives after the HTTP request context is done.
@@ -1472,6 +1510,7 @@ func (h *Handler) completeAssistantMessage(
 	if userQuery != "" {
 		go h.recordTurnMemory(bgCtx, assistantMessage, userQuery, userMessageID)
 	}
+	return nil
 }
 
 // recordTurnMemory runs the long-term memory write path for a finished turn.

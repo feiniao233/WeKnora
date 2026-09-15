@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveChatModelIDRequiresConfiguredAgentModel(t *testing.T) {
+func TestResolveChatModelIDOverrideRecoversMissingAgentModel(t *testing.T) {
 	svc := &sessionService{
 		modelService: &stubModelService{
 			modelsByID: map[string]*types.Model{
@@ -25,15 +25,14 @@ func TestResolveChatModelIDRequiresConfiguredAgentModel(t *testing.T) {
 		CustomAgent: &types.CustomAgent{
 			ID: "agent-1",
 		},
-		// Even a valid request-level model must not hide incomplete agent config.
+		// A valid per-turn model can recover an unavailable agent default.
 		SummaryModelID: "builtin-chat",
 	}
 
 	modelID, err := svc.resolveChatModelID(context.Background(), req, nil, nil)
 
-	require.Error(t, err)
-	assert.Empty(t, modelID)
-	assert.Contains(t, err.Error(), "model_id")
+	require.NoError(t, err)
+	assert.Equal(t, "builtin-chat", modelID)
 }
 
 func TestResolveChatModelIDRejectsUnavailableConfiguredAgentModel(t *testing.T) {
@@ -112,8 +111,8 @@ func TestResolveChatModelIDRejectsNonChatSummaryModelOverride(t *testing.T) {
 
 	modelID, err := svc.resolveChatModelID(context.Background(), req, nil, nil)
 
-	require.NoError(t, err)
-	assert.Equal(t, "agent-chat", modelID)
+	require.Error(t, err)
+	assert.Empty(t, modelID)
 }
 
 func TestResolveChatModelIDUsesValidSummaryModelOverride(t *testing.T) {

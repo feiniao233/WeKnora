@@ -1,5 +1,10 @@
 # AGENTS.md
 
+## 智能诊断当前计划
+
+智能诊断后续范围与建议排期以 [Steel 当前建设计划](../../work/steel-platform-v-3/docs/intelligent-diagnosis-current-plan.md) 为唯一入口。
+旧计划和归档内容仅供明确的历史追溯；计划状态不能代替代码或验收证据。WeKnora 自身的产品路线图不作为 Steel 智能诊断任务清单。
+
 ## 智能助手跨仓库开发
 
 跨仓库接口或职责边界变更时，读取 `../../work/steel-platform-v-3/AGENTS.md` 中的“智能助手跨仓库开发规范”；

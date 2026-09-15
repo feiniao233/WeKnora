@@ -51,6 +51,9 @@ type Config struct {
 	SampleRate float64
 	// Debug enables verbose logging of batch send errors.
 	Debug bool
+	// CaptureContent opts into prompt/tool/output payloads. Metadata-only is
+	// the default so enabling diagnostics does not export business content.
+	CaptureContent bool
 
 	// testExporter, when non-nil, replaces the real OTLP exporter. Tests use
 	// it to inject an in-memory span exporter (tracetest.InMemoryExporter) so
@@ -113,6 +116,7 @@ func LoadConfigFromEnv() Config {
 	if v := strings.TrimSpace(os.Getenv("LANGFUSE_DEBUG")); v != "" {
 		cfg.Debug = parseBool(v)
 	}
+	cfg.CaptureContent = parseBool(os.Getenv("LANGFUSE_CAPTURE_CONTENT"))
 
 	if cfg.SampleRate == 0 {
 		cfg.SampleRate = 1.0

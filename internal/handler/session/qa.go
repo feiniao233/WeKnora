@@ -79,6 +79,7 @@ func (rc *qaRequestContext) buildQARequest() *types.QARequest {
 		Session:             rc.session,
 		Query:               rc.query,
 		AssistantMessageID:  rc.assistantMessage.ID,
+		ExecutionConfigHash: rc.assistantMessage.ExecutionContext.ExecutionConfigHash,
 		SummaryModelID:      rc.summaryModelID,
 		CustomAgent:         rc.customAgent,
 		SharedAgentReadOnly: rc.sharedAgentReadOnly,

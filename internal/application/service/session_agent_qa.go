@@ -11,6 +11,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/rerank"
+	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -21,7 +22,7 @@ func (s *sessionService) AgentQA(
 	ctx context.Context,
 	req *types.QARequest,
 	eventBus *event.EventBus,
-) error {
+) (resultErr error) {
 	sessionID := req.Session.ID
 	// Propagate the session ID so stateful sandbox backends (CubeSandbox) can
 	// bind script execution to a per-session MicroVM instance.
@@ -37,6 +38,14 @@ func (s *sessionService) AgentQA(
 		logger.Warnf(ctx, "Custom agent not provided for session: %s", sessionID)
 		return errors.New("custom agent configuration is required for agent QA")
 	}
+	metadata := map[string]interface{}{
+		"session_id": sessionID, "message_id": req.AssistantMessageID, "agent_id": req.CustomAgent.ID,
+	}
+	if requestID, ok := types.RequestIDFromContext(ctx); ok {
+		metadata["request_id"] = requestID
+	}
+	ctx, qaSpan := langfuse.GetManager().StartSpan(ctx, langfuse.SpanOptions{Name: "agent.qa", Metadata: metadata})
+	defer func() { qaSpan.Finish(nil, metadata, resultErr) }()
 
 	// Resolve retrieval tenant using shared helper
 	agentTenantID := s.resolveRetrievalTenantID(ctx, req)
@@ -83,6 +92,12 @@ func (s *sessionService) AgentQA(
 	if effectiveModelID == "" {
 		logger.Warnf(ctx, "No summary model configured for custom agent %s", req.CustomAgent.ID)
 		return errors.New("summary model (model_id) is not configured in custom agent settings")
+	}
+	metadata["model_id"] = effectiveModelID
+	// Reuse the message's submitted configuration fingerprint so history and
+	// observations refer to the same version without exporting its contents.
+	if req.ExecutionConfigHash != "" {
+		metadata["execution_config_hash"] = req.ExecutionConfigHash
 	}
 
 	summaryModel, err := s.modelService.GetChatModel(ctx, effectiveModelID)

@@ -116,8 +116,8 @@ func (m *Manager) StartTrace(ctx context.Context, opts TraceOptions) (context.Co
 	if rel != "" {
 		attrs = append(attrs, attribute.String(attrRelease, rel))
 	}
-	attrs = append(attrs, jsonAttr(attrTraceInput, opts.Input))
-	attrs = append(attrs, jsonAttr(attrTraceMetadata, opts.Metadata))
+	attrs = append(attrs, m.contentAttr(attrTraceInput, opts.Input))
+	attrs = append(attrs, m.metadataAttr(attrTraceMetadata, opts.Metadata))
 	if len(opts.Tags) > 0 {
 		attrs = append(attrs, jsonAttr(attrTraceTags, opts.Tags))
 	}
@@ -135,12 +135,23 @@ func (t *Trace) Finish(output interface{}, metadata map[string]interface{}) {
 	if t == nil || t.manager == nil || !t.manager.Enabled() || t.span == nil {
 		return
 	}
-	attrs := []attribute.KeyValue{jsonAttr(attrTraceOutput, output)}
+	attrs := []attribute.KeyValue{t.manager.contentAttr(attrTraceOutput, output)}
 	if merged := mergeMetadata(t.metadata, metadata); merged != nil {
-		attrs = append(attrs, jsonAttr(attrTraceMetadata, merged))
+		attrs = append(attrs, t.manager.metadataAttr(attrTraceMetadata, merged))
 	}
 	t.span.SetAttributes(attrs...)
 	t.span.End()
+}
+
+// MarkError records failures that arrive inside an HTTP 200 SSE response.
+func (t *Trace) MarkError(err error) {
+	if t == nil || t.span == nil || err == nil {
+		return
+	}
+	err = observationError(err)
+	t.span.SetAttributes(attribute.String("langfuse.observation.level", "ERROR"), attribute.String("langfuse.observation.status_message", err.Error()))
+	t.span.SetStatus(codes.Error, err.Error())
+	t.span.RecordError(err)
 }
 
 // ResumeTrace reconstructs a *Trace handle from an externally-provided W3C
@@ -213,8 +224,8 @@ func (m *Manager) StartSpan(ctx context.Context, opts SpanOptions) (context.Cont
 	}
 	attrs := []attribute.KeyValue{
 		attribute.String(attrObsType, obsTypeSpan),
-		jsonAttr(attrObsInput, opts.Input),
-		jsonAttr(attrObsMetadata, opts.Metadata),
+		m.contentAttr(attrObsInput, opts.Input),
+		m.metadataAttr(attrObsMetadata, opts.Metadata),
 	}
 	ctx, span := m.tracer.Start(ctx, opts.Name, trace.WithTimestamp(time.Now()), trace.WithAttributes(attrs...))
 	return ctx, &Span{
@@ -237,12 +248,13 @@ func (s *Span) Finish(output interface{}, metadata map[string]interface{}, err e
 	if s == nil || s.manager == nil || !s.manager.Enabled() || s.span == nil {
 		return
 	}
-	attrs := []attribute.KeyValue{jsonAttr(attrObsOutput, output)}
+	attrs := []attribute.KeyValue{s.manager.contentAttr(attrObsOutput, output)}
 	if merged := mergeMetadata(s.metadata, metadata); merged != nil {
-		attrs = append(attrs, jsonAttr(attrObsMetadata, merged))
+		attrs = append(attrs, s.manager.metadataAttr(attrObsMetadata, merged))
 	}
 	s.span.SetAttributes(attrs...)
-	if err != nil {
+	if err = observationError(err); err != nil {
+		s.span.SetAttributes(attribute.String("langfuse.observation.level", "ERROR"), attribute.String("langfuse.observation.status_message", err.Error()))
 		s.span.RecordError(err)
 		s.span.SetStatus(codes.Error, err.Error())
 	}
@@ -270,8 +282,8 @@ func (m *Manager) StartGeneration(ctx context.Context, opts GenerationOptions) (
 	attrs := []attribute.KeyValue{
 		attribute.String(attrObsType, obsTypeGeneration),
 		attribute.String(attrObsModel, opts.Model),
-		jsonAttr(attrObsInput, opts.Input),
-		jsonAttr(attrObsMetadata, opts.Metadata),
+		m.contentAttr(attrObsInput, opts.Input),
+		m.metadataAttr(attrObsMetadata, opts.Metadata),
 		jsonAttr(attrObsModelParams, opts.ModelParameters),
 	}
 	ctx, span := m.tracer.Start(ctx, opts.Name, trace.WithTimestamp(time.Now()), trace.WithAttributes(attrs...))
@@ -292,12 +304,13 @@ func (g *Generation) Finish(output interface{}, usage *TokenUsage, err error) {
 	if g == nil || g.manager == nil || !g.manager.Enabled() || g.span == nil {
 		return
 	}
-	attrs := []attribute.KeyValue{jsonAttr(attrObsOutput, output)}
+	attrs := []attribute.KeyValue{g.manager.contentAttr(attrObsOutput, output)}
 	if usage != nil {
 		attrs = append(attrs, jsonAttr(attrObsUsageDetails, usage))
 	}
 	g.span.SetAttributes(attrs...)
-	if err != nil {
+	if err = observationError(err); err != nil {
+		g.span.SetAttributes(attribute.String("langfuse.observation.level", "ERROR"), attribute.String("langfuse.observation.status_message", err.Error()))
 		g.span.RecordError(err)
 		g.span.SetStatus(codes.Error, err.Error())
 	}

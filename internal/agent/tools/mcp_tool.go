@@ -11,6 +11,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/agent/approval"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/mcp"
+	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
@@ -192,9 +193,7 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 	}
 
 	connectAndCall := func(callCtx context.Context) (*mcp.CallToolResult, error) {
-		if execMeta != nil && execMeta.SessionID != "" {
-			callCtx = mcp.WithCallToolMeta(callCtx, map[string]any{"weknora/session_id": execMeta.SessionID})
-		}
+		callCtx = mcp.WithCallToolMeta(callCtx, mcpTracingMetadata(callCtx, execMeta))
 		client, err := getOrCreateMCPClientWithOAuthRetry(
 			callCtx, t.mcpManager, t.service, t.gate, oauthSess, t.mcpTool.Name, toolCallID,
 		)
@@ -270,6 +269,22 @@ func (t *MCPTool) Execute(ctx context.Context, args json.RawMessage) (*types.Too
 		Data:    data,
 		Images:  images,
 	}, nil
+}
+
+func mcpTracingMetadata(ctx context.Context, execMeta *ToolExecContext) map[string]any {
+	meta := map[string]any{}
+	if execMeta != nil && execMeta.SessionID != "" {
+		meta["weknora/session_id"] = execMeta.SessionID
+	}
+	if requestID, ok := types.RequestIDFromContext(ctx); ok {
+		meta["weknora/request_id"] = requestID
+	} else if execMeta != nil && execMeta.RequestID != "" {
+		meta["weknora/request_id"] = execMeta.RequestID
+	}
+	if parent := langfuse.TraceparentFromContext(ctx); parent != "" {
+		meta["traceparent"] = parent
+	}
+	return meta
 }
 
 const (

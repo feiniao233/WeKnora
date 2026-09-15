@@ -144,10 +144,18 @@ func finishToolSpan(span *langfuse.Span, tc types.ToolCall, execErr error, durat
 		}
 		spanErr = errors.New(msg)
 	}
-	span.Finish(output, map[string]interface{}{
+	metadata := map[string]interface{}{
 		"success":     success,
 		"duration_ms": durationMs,
-	}, spanErr)
+	}
+	if tc.Result != nil && tc.Name == "read_skill" {
+		for _, key := range []string{"skill_name", "file_path", "content_sha256"} {
+			if value, ok := tc.Result.Data[key].(string); ok {
+				metadata[key] = value
+			}
+		}
+	}
+	span.Finish(output, metadata, spanErr)
 }
 
 // dataKeys returns the sorted top-level keys of a tool's Data map.

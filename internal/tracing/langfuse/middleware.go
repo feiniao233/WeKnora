@@ -2,6 +2,7 @@ package langfuse
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -55,11 +56,14 @@ func GinMiddleware() gin.HandlerFunc {
 		c.Request = c.Request.WithContext(newCtx)
 
 		c.Next()
+		if c.Writer.Status() >= 400 {
+			trace.MarkError(fmt.Errorf("HTTP %d", c.Writer.Status()))
+		}
 
 		trace.Finish(map[string]interface{}{
 			"status":        c.Writer.Status(),
 			"response.size": c.Writer.Size(),
-		}, nil)
+		}, map[string]interface{}{"http.status_code": c.Writer.Status()})
 	}
 }
 

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -133,6 +134,7 @@ func (t *ReadSkillTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 		resultData["file_path"] = input.FilePath
 		resultData["content"] = content
 		resultData["content_length"] = len(content)
+		resultData["content_sha256"] = fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(content)))
 
 	} else {
 		// Read the main skill instructions (SKILL.md)
@@ -166,6 +168,7 @@ func (t *ReadSkillTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 		resultData["description"] = skill.Description
 		resultData["instructions"] = skill.Instructions
 		resultData["instructions_length"] = len(skill.Instructions)
+		resultData["content_sha256"] = fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(skill.Instructions)))
 		resultData["files"] = files
 
 		if dir, ok := t.skillManager.SandboxSkillDir(skill.Name); ok {

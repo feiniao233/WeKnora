@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"errors"
+	"io"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
@@ -81,8 +83,8 @@ func (l *langfuseChat) ChatStream(ctx context.Context, messages []Message, opts 
 		return ch, err
 	}
 	if ch == nil {
-		gen.Finish(nil, nil, nil)
-		return nil, nil
+		gen.Finish(nil, nil, io.ErrUnexpectedEOF)
+		return nil, io.ErrUnexpectedEOF
 	}
 
 	wrapped := make(chan types.StreamResponse)
@@ -94,26 +96,60 @@ func (l *langfuseChat) ChatStream(ctx context.Context, messages []Message, opts 
 		var toolCalls []types.LLMToolCall
 		var finishReason string
 		var firstToken bool
+		var streamErr error
+		var terminal bool
+		defer func() {
+			if streamErr == nil && !terminal {
+				streamErr = io.ErrUnexpectedEOF
+			}
+			output := buildLangfuseGenerationOutput(string(contentBuf), string(reasoningBuf), finishReason, toolCalls)
+			gen.Finish(output, convertUsage(usage), streamErr)
+		}()
 
-		for resp := range ch {
+		for {
+			var resp types.StreamResponse
+			var ok bool
+			select {
+			case <-ctx.Done():
+				streamErr = ctx.Err()
+				return
+			case resp, ok = <-ch:
+				if !ok {
+					return
+				}
+			}
+			if resp.ResponseType == types.ResponseTypeError {
+				streamErr = errors.New(resp.Content)
+			}
+			if resp.Done && (resp.ResponseType == types.ResponseTypeAnswer || resp.ResponseType == types.ResponseTypeError) {
+				terminal = true
+			}
 			if resp.ResponseType == types.ResponseTypeThinking && resp.Content != "" {
 				if !firstToken {
 					gen.MarkCompletionStart(time.Now())
 					firstToken = true
 				}
-				reasoningBuf = append(reasoningBuf, resp.Content...)
+				if mgr.CaptureContent() {
+					reasoningBuf = append(reasoningBuf, resp.Content...)
+				}
 			}
 			if resp.ResponseType == types.ResponseTypeAnswer && resp.Content != "" {
 				if !firstToken {
 					gen.MarkCompletionStart(time.Now())
 					firstToken = true
 				}
-				contentBuf = append(contentBuf, resp.Content...)
+				if mgr.CaptureContent() {
+					contentBuf = append(contentBuf, resp.Content...)
+				}
 			}
 			if resp.Usage != nil {
 				usage = resp.Usage
 			}
 			if len(resp.ToolCalls) > 0 {
+				if !firstToken {
+					gen.MarkCompletionStart(time.Now())
+					firstToken = true
+				}
 				// The downstream model-context registry decodes arguments in
 				// place before tool execution. Snapshot the provider payload so
 				// the generation observation remains the exact model output and
@@ -123,13 +159,13 @@ func (l *langfuseChat) ChatStream(ctx context.Context, messages []Message, opts 
 			if resp.FinishReason != "" {
 				finishReason = resp.FinishReason
 			}
-			wrapped <- resp
+			select {
+			case wrapped <- resp:
+			case <-ctx.Done():
+				streamErr = ctx.Err()
+				return
+			}
 		}
-
-		output := buildLangfuseGenerationOutput(
-			string(contentBuf), string(reasoningBuf), finishReason, toolCalls,
-		)
-		gen.Finish(output, convertUsage(usage), nil)
 	}()
 	return wrapped, nil
 }

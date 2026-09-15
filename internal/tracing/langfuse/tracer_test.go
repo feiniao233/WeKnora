@@ -30,6 +30,7 @@ func newTestManager(t *testing.T) (*Manager, *tracetest.InMemoryExporter) {
 		RequestTimeout: 2 * time.Second,
 		SampleRate:     1.0,
 		testExporter:   exp,
+		CaptureContent: true,
 	})
 	if err != nil {
 		t.Fatalf("init: %v", err)
@@ -125,8 +126,8 @@ func TestSpan_FinishWithError(t *testing.T) {
 		if s.Status.Code != codes.Error {
 			t.Errorf("span status = %v, want Error", s.Status.Code)
 		}
-		if s.Status.Description != "kaboom" {
-			t.Errorf("status description = %q, want kaboom", s.Status.Description)
+		if s.Status.Description != "diagnosis_failed" {
+			t.Errorf("status description = %q, want diagnosis_failed", s.Status.Description)
 		}
 		return
 	}

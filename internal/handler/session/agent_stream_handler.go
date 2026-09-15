@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -605,6 +607,11 @@ func (h *AgentStreamHandler) handleError(ctx context.Context, evt event.Event) e
 	toolCallID, _ := data.Extra["tool_call_id"].(string)
 	if toolCallID == "" && !recordExecutionFailure(h.ctx, failure) {
 		return nil
+	}
+	if toolCallID == "" {
+		if trace, ok := langfuse.TraceFromContext(h.ctx); ok {
+			trace.MarkError(errors.New(data.Error))
+		}
 	}
 	// Only safe classifications cross the browser/history boundary.
 	metadata := map[string]interface{}{

@@ -7,6 +7,7 @@ type QARequest struct {
 	Session             *Session           // The conversation session
 	Query               string             // User query text
 	AssistantMessageID  string             // Pre-created assistant message ID
+	ExecutionConfigHash string             // Existing message provenance fingerprint; supplied by the handler
 	SummaryModelID      string             // Optional model override; empty = use agent/KB default
 	CustomAgent         *CustomAgent       // Optional custom agent for config override
 	SharedAgentReadOnly bool               // True only when access came from an agent share; source-workspace writes are forbidden

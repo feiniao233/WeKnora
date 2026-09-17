@@ -41,7 +41,7 @@ func TestExecutionErrorClassification(t *testing.T) {
 }
 
 func TestExplicitSelectionErrorsRemainSafeAndActionable(t *testing.T) {
-	for _, code := range []string{"skill_unavailable"} {
+	for _, code := range []string{"skill_unavailable", "attachment_unavailable"} {
 		result := ClassifyExecutionError(code+": private backend details 403", "request")
 		require.Equal(t, code, result.Code)
 		require.True(t, result.Retryable)

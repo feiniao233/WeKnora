@@ -1087,7 +1087,13 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 
 		// Resolve pre-uploaded attachments (may still be parsing): waits with a
 		// timeline step so the send is not blocked, then injects content/images.
-		h.resolveTemporaryAttachments(streamCtx, reqCtx)
+		if err := h.resolveTemporaryAttachments(streamCtx, reqCtx); err != nil {
+			if streamCtx.asyncCtx.Err() != context.Canceled {
+				streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{Type: event.EventError, SessionID: sessionID,
+					Data: event.ErrorData{Error: err.Error(), Stage: "attachment_resolution", SessionID: sessionID}})
+			}
+			return
+		}
 
 		// Run VLM image analysis if applicable
 		h.runVLMAnalysisIfNeeded(streamCtx, reqCtx, mode)
@@ -1221,12 +1227,12 @@ func attachmentParseWaitTimeout() time.Duration {
 }
 
 // resolveTemporaryAttachments selects prompt content for pre-uploaded documents
-// after the SSE stream is live. When any attachment is still parsing it emits a
-// "attachment_parsing" timeline step and waits (bounded); unfinished attachments
-// are skipped rather than blocking or failing the whole turn.
-func (h *Handler) resolveTemporaryAttachments(streamCtx *sseStreamContext, reqCtx *qaRequestContext) {
+// after the SSE stream is live. It emits an "attachment_parsing" timeline step
+// and waits a bounded time if any attachment is still parsing; unfinished attachments
+// fail the turn rather than letting the model analyze incomplete materials.
+func (h *Handler) resolveTemporaryAttachments(streamCtx *sseStreamContext, reqCtx *qaRequestContext) error {
 	if len(reqCtx.attachmentIDs) == 0 {
-		return
+		return nil
 	}
 	ctx := streamCtx.asyncCtx
 	sessionID := reqCtx.sessionID
@@ -1235,22 +1241,21 @@ func (h *Handler) resolveTemporaryAttachments(streamCtx *sseStreamContext, reqCt
 	tenantID := reqCtx.session.TenantID
 
 	start := time.Now()
-	var toolCallID string
+	toolCallID := uuid.New().String()
+	streamCtx.eventBus.Emit(ctx, event.Event{
+		Type:      event.EventAgentToolCall,
+		SessionID: sessionID,
+		Data: event.AgentToolCallData{
+			ToolCallID: toolCallID,
+			ToolName:   "attachment_parsing",
+			Iteration:  0,
+		},
+	})
+	waitTimeout := attachmentParseWaitTimeout()
+	if reqCtx.customAgent != nil && reqCtx.customAgent.Config.AttachmentParseWaitTimeoutSec > 0 {
+		waitTimeout = time.Duration(reqCtx.customAgent.Config.AttachmentParseWaitTimeoutSec) * time.Second
+	}
 	if h.hasPendingAttachments(ctx, tenantID, sessionID, reqCtx.attachmentIDs) {
-		toolCallID = uuid.New().String()
-		streamCtx.eventBus.Emit(ctx, event.Event{
-			Type:      event.EventAgentToolCall,
-			SessionID: sessionID,
-			Data: event.AgentToolCallData{
-				ToolCallID: toolCallID,
-				ToolName:   "attachment_parsing",
-				Iteration:  0,
-			},
-		})
-		waitTimeout := attachmentParseWaitTimeout()
-		if reqCtx.customAgent != nil && reqCtx.customAgent.Config.AttachmentParseWaitTimeoutSec > 0 {
-			waitTimeout = time.Duration(reqCtx.customAgent.Config.AttachmentParseWaitTimeoutSec) * time.Second
-		}
 		h.waitForAttachments(ctx, tenantID, sessionID, reqCtx.attachmentIDs, waitTimeout)
 	}
 
@@ -1258,55 +1263,51 @@ func (h *Handler) resolveTemporaryAttachments(streamCtx *sseStreamContext, reqCt
 
 	var temporaryResult *types.TemporaryDocumentPromptResult
 	var resolveErr error
-	if len(readyIDs) > 0 {
+	if skipped > 0 {
+		resolveErr = fmt.Errorf("attachment_unavailable: selected attachments are not ready")
+	} else if len(readyIDs) > 0 {
 		temporaryResult, resolveErr = h.temporaryDocuments.ResolveForPrompt(ctx, tenantID, sessionID, readyIDs, reqCtx.query)
 	}
 
-	if toolCallID != "" {
-		output := fmt.Sprintf("已解析 %d 个附件", len(readyIDs))
-		if skipped > 0 {
-			output += fmt.Sprintf("，%d 个未完成已跳过", skipped)
+	if resolveErr == nil {
+		if temporaryResult == nil {
+			resolveErr = fmt.Errorf("attachment_unavailable: empty resolution")
+		} else {
+			resolveErr = validateResolvedAttachments(reqCtx.attachmentIDs, temporaryResult.Attachments, reqCtx.customAgent)
 		}
-		success := resolveErr == nil
-		if resolveErr != nil {
-			output = fmt.Sprintf("附件解析失败: %v", resolveErr)
-		}
-		streamCtx.eventBus.Emit(ctx, event.Event{
-			Type:      event.EventAgentToolResult,
-			SessionID: sessionID,
-			Data: event.AgentToolResultData{
-				ToolCallID: toolCallID,
-				ToolName:   "attachment_parsing",
-				Output:     output,
-				Success:    success,
-				Duration:   time.Since(start).Milliseconds(),
-				Iteration:  0,
-				Data: map[string]interface{}{
-					"display_type":  "attachment_parsing",
-					"parsed_count":  len(readyIDs),
-					"skipped_count": skipped,
-				},
-			},
-		})
 	}
+	output := fmt.Sprintf("已解析 %d 个附件", len(readyIDs))
+	if skipped > 0 {
+		output += fmt.Sprintf("，%d 个未就绪，本次未开始分析", skipped)
+	}
+	success := resolveErr == nil
+	if resolveErr != nil {
+		output = "附件未就绪或解析失败，请等待解析完成、重新上传或移除后重试"
+	}
+	streamCtx.eventBus.Emit(ctx, event.Event{
+		Type:      event.EventAgentToolResult,
+		SessionID: sessionID,
+		Data: event.AgentToolResultData{
+			ToolCallID: toolCallID,
+			ToolName:   "attachment_parsing",
+			Output:     output,
+			Success:    success,
+			Duration:   time.Since(start).Milliseconds(),
+			Iteration:  0,
+			Data: map[string]interface{}{
+				"display_type":  "attachment_parsing",
+				"parsed_count":  len(readyIDs),
+				"skipped_count": skipped,
+			},
+		},
+	})
 	if resolveErr != nil || temporaryResult == nil {
 		if resolveErr != nil {
 			logger.Warnf(ctx, "temporary attachment resolution failed for session %s: %v", sessionID, resolveErr)
 		}
-		return
+		return fmt.Errorf("attachment_unavailable: selected attachments could not be resolved")
 	}
-
 	attachments := temporaryResult.Attachments
-	if reqCtx.customAgent != nil && len(reqCtx.customAgent.Config.SupportedFileTypes) > 0 {
-		filtered := attachments[:0]
-		for _, att := range attachments {
-			ext := strings.TrimPrefix(strings.ToLower(att.FileType), ".")
-			if containsFileType(reqCtx.customAgent.Config.SupportedFileTypes, ext) {
-				filtered = append(filtered, att)
-			}
-		}
-		attachments = filtered
-	}
 	reqCtx.attachments = append(reqCtx.attachments, attachments...)
 	// Persist the freshly selected content back onto the stored user message.
 	// The message was created with metadata-only attachment entries (content is
@@ -1319,6 +1320,7 @@ func (h *Handler) resolveTemporaryAttachments(streamCtx *sseStreamContext, reqCt
 			reqCtx.images = append(reqCtx.images, ImageAttachment{URL: imageURL})
 		}
 	}
+	return nil
 }
 
 // persistResolvedAttachmentContent writes the parsed content of pre-uploaded

@@ -578,7 +578,7 @@ func buildMustUseBlock(mcpServices []*PinnedMCPServiceInfo, skills []*PinnedSkil
 			continue
 		}
 		name := sanitizeMustUseField(skill.Name)
-		lines = append(lines, fmt.Sprintf("Must call read_skill(skill_name=\"%s\") for @Skill \"%s\" before answering.", name, name))
+		lines = append(lines, fmt.Sprintf("Use @Skill \"%s\" instructions loaded by the runtime; read_skill(skill_name=\"%s\") remains available for additional resources.", name, name))
 	}
 	if len(lines) == 0 {
 		return ""

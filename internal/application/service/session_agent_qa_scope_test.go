@@ -78,40 +78,40 @@ func TestApplyPerRequestMCPScope_NoneIgnoresMentionAndDoesNotPin(t *testing.T) {
 	assert.Empty(t, cfg.PinnedMCPServiceIDs)
 }
 
-func TestApplyPerRequestSkillScope_SelectedPinsMentionedAndKeepsAllowed(t *testing.T) {
-	cfg := &types.AgentConfig{SkillsEnabled: true, AllowedSkills: []string{"a", "b"}}
-	applyPerRequestSkillScope(context.Background(), cfg, "selected", []string{"a"})
-	assert.True(t, cfg.SkillsEnabled)
-	// Allow-gate is not narrowed: a prompt-mandated skill the user did not
-	// @mention (b) must remain callable.
-	assert.Equal(t, []string{"a", "b"}, cfg.AllowedSkills)
-	assert.Equal(t, []string{"a"}, cfg.PinnedSkillNames)
-}
-
-func TestApplyPerRequestSkillScope_SelectedMentionOutsideAllowedIsNotPinned(t *testing.T) {
-	cfg := &types.AgentConfig{SkillsEnabled: true, AllowedSkills: []string{"a", "b"}}
-	applyPerRequestSkillScope(context.Background(), cfg, "selected", []string{"c"})
-	// Skills stay enabled (no narrowing-to-empty disable); the out-of-scope
-	// mention is simply not pinned.
-	assert.True(t, cfg.SkillsEnabled)
-	assert.Equal(t, []string{"a", "b"}, cfg.AllowedSkills)
-	assert.Empty(t, cfg.PinnedSkillNames)
-}
-
-func TestApplyPerRequestSkillScope_AllPinsMentionedWithoutNarrowingGate(t *testing.T) {
-	cfg := &types.AgentConfig{SkillsEnabled: true}
-	applyPerRequestSkillScope(context.Background(), cfg, "all", []string{"analysis", "analysis"})
-	assert.True(t, cfg.SkillsEnabled)
-	// "all" mode keeps AllowedSkills empty (= all allowed); it does not narrow
-	// to only the mentioned set, so other skills the agent needs stay callable.
-	assert.Empty(t, cfg.AllowedSkills)
-	assert.Equal(t, []string{"analysis"}, cfg.PinnedSkillNames)
-}
-
-func TestApplyPerRequestSkillScope_NoneIgnores(t *testing.T) {
-	cfg := &types.AgentConfig{SkillsEnabled: true, AllowedSkills: []string{"a"}}
-	applyPerRequestSkillScope(context.Background(), cfg, "none", []string{"a"})
-	assert.Empty(t, cfg.PinnedSkillNames)
+func TestApplyPerRequestSkillScope(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode         string
+		enabled            bool
+		allowed, requested []string
+		rows               []*types.TenantSkillEntity
+		wantErr            bool
+	}{
+		{name: "default unchanged", mode: "none"},
+		{name: "disabled", mode: "none", requested: []string{"a"}, wantErr: true},
+		{name: "unknown mode", mode: "future", enabled: true, requested: []string{"a"}, wantErr: true},
+		{name: "empty mode", requested: []string{"a"}, wantErr: true},
+		{name: "outside agent", mode: "selected", enabled: true, allowed: []string{"b"}, requested: []string{"a"}, wantErr: true},
+		{name: "empty selected", mode: "selected", enabled: true, requested: []string{"a"}, wantErr: true},
+		{name: "uninstalled", mode: "all", enabled: true, requested: []string{"a"}, wantErr: true},
+		{name: "disabled install", mode: "all", enabled: true, requested: []string{"a"}, rows: []*types.TenantSkillEntity{{Name: "a", Status: types.SkillStatusReady}}, wantErr: true},
+		{name: "installing", mode: "all", enabled: true, requested: []string{"a"}, rows: []*types.TenantSkillEntity{{Name: "a", Enabled: true, Status: "installing"}}, wantErr: true},
+		{name: "ready selected", mode: "selected", enabled: true, allowed: []string{"a", "b"}, requested: []string{"a", "a"}, rows: []*types.TenantSkillEntity{{Name: "a", Enabled: true, Status: types.SkillStatusReady}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &types.AgentConfig{SkillsEnabled: tc.enabled, AllowedSkills: tc.allowed, TenantSkills: tc.rows}
+			err := applyPerRequestSkillScope(t.Context(), cfg, tc.mode, tc.requested)
+			if tc.wantErr {
+				assert.ErrorContains(t, err, "skill_unavailable")
+				assert.Empty(t, cfg.PinnedSkillNames)
+			} else {
+				assert.NoError(t, err)
+				if len(tc.requested) > 0 {
+					assert.Equal(t, []string{"a"}, cfg.PinnedSkillNames)
+				}
+			}
+			assert.Equal(t, tc.allowed, cfg.AllowedSkills, "selection cannot revoke mandatory Agent skills")
+		})
+	}
 }
 
 func TestConfigureSkillsFromAgentDoesNotLoadHostPreloadedDir(t *testing.T) {
@@ -127,4 +127,16 @@ func TestConfigureSkillsFromAgentDoesNotLoadHostPreloadedDir(t *testing.T) {
 	assert.Equal(t, "cfg-1", cfg.SandboxConfigID)
 	assert.Empty(t, cfg.SkillDirs,
 		"the host skills/preloaded tree is not what the sandbox image carries")
+}
+
+func TestExplicitSkillCannotUseAnotherWorkspaceOrSandbox(t *testing.T) {
+	fx := newEffectiveFixture(t)
+	for _, scope := range []struct {
+		tenant uint64
+		config string
+	}{{8, "cfg-1"}, {7, "different-config"}} {
+		cfg := &types.AgentConfig{SkillsEnabled: true, TenantSkills: effectiveTenantSkills(t.Context(), fx.configs, fx.skills, scope.tenant, scope.config)}
+		assert.ErrorContains(t, applyPerRequestSkillScope(t.Context(), cfg, "all", []string{"ready-enabled"}), "skill_unavailable")
+		assert.Empty(t, cfg.PinnedSkillNames)
+	}
 }

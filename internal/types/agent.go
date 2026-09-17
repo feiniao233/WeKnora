@@ -152,7 +152,8 @@ type AgentConfig struct {
 	// invoke. Runtime only: it is derived per turn from the config the agent
 	// selected, never stored on the agent record.
 	TenantSkills []*TenantSkillEntity `json:"-"`
-	// Per-request @mention pins (runtime only; injected as <must_use> in the user message).
+	// Per-request @mention pins (runtime only). MCP pins produce a must-use
+	// hint; skill pins are read by the runtime before the first model call.
 	PinnedMCPServiceIDs []string `json:"-"`
 	PinnedSkillNames    []string `json:"-"`
 	// SharedAgentReadOnly prevents a shared agent from mutating resources in

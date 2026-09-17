@@ -25,6 +25,8 @@ func ClassifyExecutionError(raw, requestID string) *ExecutionError {
 	msg := strings.ToLower(raw)
 	e := &ExecutionError{Code: "diagnosis_failed", Message: "诊断未完成，请重试；已生成内容已保留。", Retryable: true, RequestID: requestID}
 	switch {
+	case strings.Contains(msg, "skill_unavailable"):
+		e.Code, e.Message = "skill_unavailable", "所选技能不可用或加载失败，请检查助手范围、技能启用和安装状态后重试。"
 	case strings.Contains(msg, "message_save_failed"), strings.Contains(msg, "execution result could not be saved"):
 		e.Code, e.Message = "message_save_failed", "诊断结果保存失败，请重试；当前页面仍保留已生成内容。"
 	case strings.Contains(msg, "rate_limited"), strings.Contains(msg, "429"), strings.Contains(msg, "rate limit"), strings.Contains(msg, "quota"):

@@ -265,6 +265,9 @@ func (s *agentService) CreateAgentEngine(
 	if offerSkills {
 		skillsManager, err := s.initializeSkillsManager(ctx, sessionID, config, toolRegistry)
 		if err != nil {
+			if len(config.PinnedSkillNames) > 0 {
+				return nil, fmt.Errorf("skill_unavailable: 所选技能加载失败，请检查技能安装状态: %w", err)
+			}
 			logger.Warnf(ctx, "Failed to initialize skills manager: %v", err)
 		} else if skillsManager != nil {
 			engine.SetSkillsManager(skillsManager)

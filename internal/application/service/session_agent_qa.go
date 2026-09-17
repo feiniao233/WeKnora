@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/event"
@@ -355,11 +356,12 @@ func (s *sessionService) buildAgentConfig(
 	} else {
 		agentConfig.AllowedTools = tools.DefaultAllowedTools()
 	}
-	// Apply per-turn @Skill / @MCP scope. Each helper narrows the agent's
-	// whitelist to the mentioned items and records the pinned set used for the
-	// <must_use> hint, keeping all scope logic in one place per resource type.
+	// Validate per-turn skill choices without revoking mandatory Agent skills.
+	// MCP mentions retain their existing request-level narrowing behavior.
 	isSharedAgent := req.SharedAgentReadOnly
-	applyPerRequestSkillScope(ctx, agentConfig, customAgent.Config.SkillsSelectionMode, req.SkillNames)
+	if err := applyPerRequestSkillScope(ctx, agentConfig, customAgent.Config.SkillsSelectionMode, req.SkillNames); err != nil {
+		return nil, err
+	}
 	applyPerRequestMCPScope(ctx, agentConfig, customAgent.Config.MCPServices, isSharedAgent, req.MCPServiceIDs)
 
 	// Use custom agent's system prompt if specified
@@ -451,36 +453,36 @@ func mergeResolvedTagKnowledgeIDs(
 	return uniqueNonEmptyStrings(merged)
 }
 
-// applyPerRequestSkillScope records the @Skill mentions for this turn as the
-// pinned set that drives the <must_use> hint. It deliberately does NOT narrow
-// the allow-gate: an agent whose prompt requires a skill the user did not
-// @mention must still be able to read and execute it. Mentioning a skill only
-// prioritizes it, it never revokes access to the agent's configured set.
-//
-// It is a no-op when no skills were mentioned or skills are disabled.
+// applyPerRequestSkillScope validates explicit choices against the same installed
+// image and Agent allowlist used by read_skill. An explicit choice must never
+// silently degrade to an unskilled answer. Unmentioned required skills remain
+// allowed so request preferences cannot revoke the Agent's safety workflow.
 func applyPerRequestSkillScope(
 	ctx context.Context,
 	agentConfig *types.AgentConfig,
 	skillsMode string,
 	requested []string,
-) {
+) error {
 	if len(requested) == 0 {
-		return
+		return nil
 	}
-	if skillsMode == "none" || skillsMode == "" {
-		logger.Warnf(ctx, "Ignoring @skill mention: agent skills selection is disabled (mode=%s)", skillsMode)
-		return
+	if (skillsMode != "all" && skillsMode != "selected") || !agentConfig.SkillsEnabled {
+		return errors.New("skill_unavailable: 所选技能不可用：当前助手未启用技能，请取消选择或切换助手")
 	}
-	if !agentConfig.SkillsEnabled {
-		return
+	for _, name := range requested {
+		if (skillsMode == "selected" && len(agentConfig.AllowedSkills) == 0) ||
+			(len(agentConfig.AllowedSkills) > 0 && !slices.Contains(agentConfig.AllowedSkills, name)) {
+			return errors.New("skill_unavailable: 所选技能不在当前助手允许范围内，请重新选择")
+		}
+		available := slices.ContainsFunc(agentConfig.TenantSkills, func(row *types.TenantSkillEntity) bool {
+			return row != nil && row.Name == name && row.Enabled && row.Status == types.SkillStatusReady
+		})
+		if !available {
+			return errors.New("skill_unavailable: 所选技能尚未就绪或已停用，请检查当前运行环境的安装状态")
+		}
 	}
-	// PinnedSkillNames carries only mentioned skills that are currently
-	// allowed, so the <must_use> hint never directs the model at a skill it
-	// cannot load. An empty AllowedSkills means all skills are allowed,
-	// matching Manager.isSkillAllowed, so every mention is pinned in that case.
 	agentConfig.PinnedSkillNames = pinPreservingRequestOrder(requested, agentConfig.AllowedSkills)
-	logger.Infof(ctx, "Applied per-request @skill scope: requested=%v effective=%v pinned=%v",
-		requested, agentConfig.AllowedSkills, agentConfig.PinnedSkillNames)
+	return nil
 }
 
 // applyPerRequestMCPScope narrows the agent's MCP services to the @MCP mentions

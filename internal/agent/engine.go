@@ -318,6 +318,15 @@ func (e *AgentEngine) Execute(
 	}
 	messages := e.buildMessagesWithLLMContext(systemPrompt, query, sessionID, llmContext, imgs)
 
+	// Explicit user-selected skills are loaded by the runtime, independently of
+	// whether the model elects to call read_skill. Reuse the normal tool pipeline
+	// for trace events, content fingerprints and persisted timeline results.
+	messages, err := e.loadPinnedSkills(ctx, state, messages, sessionID, messageID)
+	if err != nil {
+		finishAgentSpan(agentSpan, state, err)
+		return nil, err
+	}
+
 	// Get tool definitions for function calling
 	tools := e.buildToolsForLLM()
 	toolListStr := strings.Join(listToolNames(tools), ", ")
@@ -329,7 +338,7 @@ func (e *AgentEngine) Execute(
 		"tools":      toolListStr,
 	})
 
-	_, err := e.executeLoop(ctx, state, query, messages, tools, sessionID, messageID)
+	_, err = e.executeLoop(ctx, state, query, messages, tools, sessionID, messageID)
 	if err != nil {
 		logger.Errorf(ctx, "[Agent] Execution failed: %v", err)
 		finishAgentSpan(agentSpan, state, err)

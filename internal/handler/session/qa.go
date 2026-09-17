@@ -913,6 +913,11 @@ const (
 // executeQA is the unified execution flow for both KnowledgeQA and AgentQA modes.
 // It handles message creation, SSE setup, VLM analysis, service invocation, and error handling.
 func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle bool) {
+	if len(reqCtx.skillNames) > 0 && (mode != qaModeAgent || reqCtx.customAgent == nil) {
+		reqCtx.c.Error(errors.NewBadRequestError("skill_unavailable: 指定技能需要可访问的智能推理助手，请切换助手或取消技能选择"))
+		return
+	}
+
 	ctx := reqCtx.ctx
 	sessionID := reqCtx.sessionID
 

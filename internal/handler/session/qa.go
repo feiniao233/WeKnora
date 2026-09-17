@@ -88,6 +88,7 @@ func (rc *qaRequestContext) buildQARequest() *types.QARequest {
 		TagScopes:           rc.tagScopes,
 		MCPServiceIDs:       rc.mcpServiceIDs,
 		SkillNames:          rc.skillNames,
+		MentionedItems:      rc.mentionedItems,
 		ImageURLs:           imageURLs,
 		ImageDescription:    imageDescription,
 		UserMessageID:       rc.userMessageID,
@@ -916,6 +917,15 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 	if len(reqCtx.skillNames) > 0 && (mode != qaModeAgent || reqCtx.customAgent == nil) {
 		reqCtx.c.Error(errors.NewBadRequestError("skill_unavailable: 指定技能需要可访问的智能推理助手，请切换助手或取消技能选择"))
 		return
+	}
+
+	if mode != qaModeAgent || reqCtx.customAgent == nil {
+		for _, item := range reqCtx.mentionedItems {
+			if item.Type == "asset" || item.Type == "alarm" {
+				reqCtx.c.Error(errors.NewBadRequestError("context_unavailable: 业务对象引用需要可访问的智能推理助手，请切换助手或取消对象选择"))
+				return
+			}
+		}
 	}
 
 	ctx := reqCtx.ctx

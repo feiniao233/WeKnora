@@ -16,3 +16,8 @@ test('later tool_call events merge arguments onto the same pending card', () => 
   assert.match(source, /function mergeToolCallArguments/)
   assert.match(source, /toolCallEvent\.arguments = mergeToolCallArguments\(toolCallEvent\.arguments, incomingArguments\)/)
 })
+
+test('historical agent messages promote a successfully submitted RCA report to the answer', () => {
+  assert.match(source, /submittedRCAReportFromSteps\(item\.agent_steps\)/)
+  assert.match(source, /if \(submittedReport\) item\.content = submittedReport/)
+})

@@ -54,3 +54,16 @@ func TestMaxIterationsFallbackUsesChineseWithoutSuccessfulRCAReport(t *testing.T
 		})
 	}
 }
+
+func TestSuccessfulRCAReportAcceptsNamespacedToolAndTrimsOuterWhitespace(t *testing.T) {
+	report, ok := successfulRCAReport([]types.ToolCall{
+		{
+			Name:   "ops__submit_rca_report",
+			Args:   map[string]any{"report": "  # 根因分析报告\n\n正文  \n"},
+			Result: &types.ToolResult{Success: true},
+		},
+	})
+
+	require.True(t, ok)
+	require.Equal(t, "# 根因分析报告\n\n正文", report)
+}

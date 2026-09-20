@@ -861,6 +861,55 @@ func TestExecuteLoop_EndTurnTerminates(t *testing.T) {
 	assert.Equal(t, 1, mock.callCount, "end_turn must end the loop after the first model call")
 }
 
+func TestExecuteLoop_SubmittedRCAReportTerminatesWithoutRegeneration(t *testing.T) {
+	const report = "# 根因分析报告\n\n## 摘要\n\n交换机地址冲突。"
+	model := &mockChat{responses: []mockResponse{{chunks: []types.StreamResponse{{
+		ResponseType: types.ResponseTypeAnswer,
+		ToolCalls: []types.LLMToolCall{{
+			ID: "submit-1",
+			Function: types.FunctionCall{
+				Name:      "ops__submit_rca_report",
+				Arguments: `{"report":` + string(mustJSON(t, report)) + `}`,
+			},
+		}},
+		Done:         true,
+		FinishReason: "tool_calls",
+	}}}}}
+	engine := newTestEngine(t, model)
+	engine.toolRegistry = agenttools.NewToolRegistry()
+	tool := newCountingTool("ops__submit_rca_report")
+	engine.toolRegistry.RegisterTool(tool)
+
+	var answer strings.Builder
+	var doneCount int
+	engine.eventBus.On(event.EventAgentFinalAnswer, func(_ context.Context, evt event.Event) error {
+		data, ok := evt.Data.(event.AgentFinalAnswerData)
+		require.True(t, ok)
+		answer.WriteString(data.Content)
+		if data.Done {
+			doneCount++
+		}
+		return nil
+	})
+
+	state := &types.AgentState{}
+	_, err := engine.executeLoop(t.Context(), state, "分析告警", emptyMessages(), nil, "sess-1", "msg-1")
+	require.NoError(t, err)
+	require.True(t, state.IsComplete)
+	require.Equal(t, report, state.FinalAnswer)
+	require.Equal(t, report, answer.String())
+	require.Equal(t, 1, doneCount)
+	require.Equal(t, 1, tool.calls)
+	require.Equal(t, 1, model.callCount, "报告提交成功后不得再次调用模型生成同一份报告")
+}
+
+func mustJSON(t *testing.T, value string) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	require.NoError(t, err)
+	return encoded
+}
+
 func TestStreamFinalAnswerToEventBus_EmitsDoneWhenProviderEndsWithEmptyChunk(t *testing.T) {
 	mock := &mockChat{
 		responses: []mockResponse{

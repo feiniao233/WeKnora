@@ -192,20 +192,56 @@ func (e *AgentEngine) handleMaxIterations(
 
 func maxIterationsFallback(state *types.AgentState) string {
 	for i := len(state.RoundSteps) - 1; i >= 0; i-- {
-		toolCalls := state.RoundSteps[i].ToolCalls
-		for j := len(toolCalls) - 1; j >= 0; j-- {
-			toolCall := toolCalls[j]
-			if toolCall.Result == nil || !toolCall.Result.Success ||
-				(toolCall.Name != "submit_rca_report" && !strings.HasSuffix(toolCall.Name, "__submit_rca_report")) {
-				continue
-			}
-			report, ok := toolCall.Args["report"].(string)
-			if ok && strings.TrimSpace(report) != "" {
-				return report
-			}
+		if report, ok := successfulRCAReport(state.RoundSteps[i].ToolCalls); ok {
+			return report
 		}
 	}
 	return "抱歉，暂时无法生成完整分析结果，请稍后重试。"
+}
+
+func successfulRCAReport(toolCalls []types.ToolCall) (string, bool) {
+	for i := len(toolCalls) - 1; i >= 0; i-- {
+		toolCall := toolCalls[i]
+		if toolCall.Result == nil || !toolCall.Result.Success ||
+			(toolCall.Name != "submit_rca_report" && !strings.HasSuffix(toolCall.Name, "__submit_rca_report")) {
+			continue
+		}
+		report, ok := toolCall.Args["report"].(string)
+		if !ok {
+			continue
+		}
+		report = strings.TrimSpace(report)
+		if report != "" {
+			return report, true
+		}
+	}
+	return "", false
+}
+
+func (e *AgentEngine) completeWithSubmittedRCAReport(
+	ctx context.Context, state *types.AgentState, step types.AgentStep, sessionID string,
+) bool {
+	report, ok := successfulRCAReport(step.ToolCalls)
+	if !ok {
+		return false
+	}
+
+	answerID := generateEventID("answer")
+	e.eventBus.Emit(ctx, event.Event{
+		ID: answerID, Type: event.EventAgentFinalAnswer, SessionID: sessionID,
+		Data: event.AgentFinalAnswerData{Content: report},
+	})
+	e.eventBus.Emit(ctx, event.Event{
+		ID: answerID, Type: event.EventAgentFinalAnswer, SessionID: sessionID,
+		Data: event.AgentFinalAnswerData{Done: true},
+	})
+	state.FinalAnswer = report
+	state.IsComplete = true
+	common.PipelineInfo(ctx, "Agent", "submitted_rca_report_finalized", map[string]any{
+		"iteration":  state.CurrentRound,
+		"answer_len": len(report),
+	})
+	return true
 }
 
 // emitCompletionEvent emits the EventAgentComplete event with execution summary.

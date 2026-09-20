@@ -195,7 +195,7 @@ func (c *RemoteAPIChat) Chat(ctx context.Context, messages []Message, opts *Chat
 	c.logRequest(timeoutCtx, req, false)
 	resp, err := c.client.CreateChatCompletion(timeoutCtx, req)
 	if err != nil {
-		if isMultimodalNotSupportedError(err) {
+		if isMultimodalNotSupportedError(err) && !requiresImages(timeoutCtx) {
 			logger.Warnf(timeoutCtx, "[LLM Request] Model %s does not support multimodal, retrying without images", c.modelName)
 			cleaned := stripImagesFromMessages(messages)
 			req = c.shapedRequest(cleaned, opts, false)
@@ -304,7 +304,7 @@ func (c *RemoteAPIChat) ChatStream(ctx context.Context, messages []Message, opts
 
 	stream, err := c.client.CreateChatCompletionStream(timeoutCtx, req)
 	if err != nil {
-		if isMultimodalNotSupportedError(err) {
+		if isMultimodalNotSupportedError(err) && !requiresImages(timeoutCtx) {
 			logger.Warnf(timeoutCtx, "[LLM Stream] Model %s does not support multimodal, retrying without images", c.modelName)
 			cleaned := stripImagesFromMessages(messages)
 			req = c.shapedRequest(cleaned, opts, true)

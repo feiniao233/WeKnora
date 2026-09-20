@@ -1,10 +1,15 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -172,6 +177,14 @@ func (s *temporaryDocumentService) Create(
 		fileSize = int64(len(data))
 	}
 
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty attachment")
+	}
+	if ext == ".png" || ext == ".jpg" || ext == ".jpeg" {
+		if err := validateTemporaryImage(data, ext); err != nil {
+			return nil, err
+		}
+	}
 	storageName := fmt.Sprintf("chat_attachment_%s%s", uuid.NewString()[:12], ext)
 	resourceRef, err := s.fileService.SaveBytes(ctx, data, tenantID, storageName, true)
 	if err != nil {
@@ -360,6 +373,12 @@ func (s *temporaryDocumentService) parse(ctx context.Context, document *types.Te
 	ext := document.FileType
 	var options types.TemporaryDocumentCreateOptions
 	_ = json.Unmarshal(document.ProcessingOptions, &options)
+	if options.DirectVision && (ext == ".png" || ext == ".jpg" || ext == ".jpeg") {
+		if err := validateTemporaryImage(data, ext); err != nil {
+			return "", nil, nil, err
+		}
+		return "", []types.TemporaryDocumentImage{{URL: document.ResourceRef, MimeType: http.DetectContentType(data)}}, map[string]string{"parser": "direct_vision"}, nil
+	}
 	if options.ParserEngine == "" || options.ParserEngine == "auto" {
 		if tenant, ok := ctx.Value(types.TenantInfoContextKey).(*types.Tenant); ok && tenant != nil {
 			options.ParserEngine = tenant.ParserEngineConfig.ResolveChatParserEngine(ext)
@@ -444,6 +463,9 @@ func (s *temporaryDocumentService) parse(ctx context.Context, document *types.Te
 	if enriched := s.applyImageUnderstanding(ctx, ext, options, data, pageImages, content); enriched != "" {
 		content = enriched
 		metadata["image_understanding"] = "vlm"
+	}
+	if docparser.IsImageFormat(ext) && approxTextContentRunes(content) == 0 {
+		return "", nil, nil, fmt.Errorf("image parsing produced no readable content")
 	}
 	return content, images, metadata, nil
 }
@@ -629,12 +651,25 @@ func (s *temporaryDocumentService) ResolveForPrompt(ctx context.Context, tenantI
 			ContentMode: map[bool]string{true: "full", false: "selected_chunks"}[selected == total],
 			TokenCount:  document.TokenCount, SelectedChunks: selected, TotalChunks: total,
 		})
+		if document.FileType == ".png" || document.FileType == ".jpg" || document.FileType == ".jpeg" {
+			if document.ResourceRef == "" {
+				return nil, fmt.Errorf("image attachment source is unavailable")
+			}
+			if len(result.ImageURLs) >= types.MaxTemporaryAttachmentsPerMessage {
+				return nil, fmt.Errorf("too many attachment images; select fewer attachments")
+			}
+			result.ImageURLs = append(result.ImageURLs, document.ResourceRef)
+			continue
+		}
 		// Image-type attachments always expose their image so vision models can
 		// see it directly; text documents only attach extracted images when the
 		// question is visual, to avoid gratuitous multimodal latency.
 		if docparser.IsImageFormat(document.FileType) || isVisualDocumentQuery(query) {
 			for _, image := range temporaryDocumentImageRefs(document.ImageRefs) {
-				if image.URL != "" && len(result.ImageURLs) < 4 {
+				if image.URL != "" {
+					if len(result.ImageURLs) >= types.MaxTemporaryAttachmentsPerMessage {
+						return nil, fmt.Errorf("too many attachment images; select fewer attachments")
+					}
 					result.ImageURLs = append(result.ImageURLs, image.URL)
 				}
 			}
@@ -772,4 +807,22 @@ func (s *temporaryDocumentService) CleanupExpired(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+func validateTemporaryImage(data []byte, ext string) error {
+	expected := "image/jpeg"
+	if ext == ".png" {
+		expected = "image/png"
+	}
+	if http.DetectContentType(data) != expected {
+		return fmt.Errorf("image content does not match file type")
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > 100_000_000 {
+		return fmt.Errorf("invalid image content or dimensions")
+	}
+	if _, _, err := image.Decode(bytes.NewReader(data)); err != nil {
+		return fmt.Errorf("invalid image content: %w", err)
+	}
+	return nil
 }

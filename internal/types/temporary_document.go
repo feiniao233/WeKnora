@@ -92,6 +92,8 @@ type TemporaryDocumentTaskPayload struct {
 }
 
 type TemporaryDocumentCreateOptions struct {
+	// DirectVision is set only after server-side chat model capability validation.
+	DirectVision bool `json:"direct_vision,omitzero"`
 	// ResourceTenantID is the verified agent source workspace used to resolve
 	// parser/model dependencies. The document itself remains owned by TenantID.
 	ResourceTenantID uint64 `json:"resource_tenant_id,omitempty"`

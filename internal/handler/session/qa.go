@@ -1159,6 +1159,9 @@ func (h *Handler) runVLMAnalysisIfNeeded(streamCtx *sseStreamContext, reqCtx *qa
 		return
 	}
 
+	if vision, err := h.attachmentChatSupportsVision(streamCtx.asyncCtx, reqCtx.customAgent, reqCtx.summaryModelID); err == nil && vision {
+		return
+	}
 	sessionID := reqCtx.sessionID
 
 	// In normal mode, only run VLM for pure-chat path
@@ -1284,6 +1287,9 @@ func (h *Handler) resolveTemporaryAttachments(streamCtx *sseStreamContext, reqCt
 			resolveErr = fmt.Errorf("attachment_unavailable: empty resolution")
 		} else {
 			resolveErr = validateResolvedAttachments(reqCtx.attachmentIDs, temporaryResult.Attachments, reqCtx.customAgent)
+			if resolveErr == nil {
+				resolveErr = h.prepareTemporaryImages(ctx, reqCtx, temporaryResult)
+			}
 		}
 	}
 	output := fmt.Sprintf("已解析 %d 个附件", len(readyIDs))

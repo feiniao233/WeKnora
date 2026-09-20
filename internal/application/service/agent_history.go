@@ -129,6 +129,12 @@ func buildUserHistoryMessage(m *types.Message) chat.Message {
 	}
 	if len(m.Attachments) > 0 {
 		content += m.Attachments.BuildPrompt()
+		for _, attachment := range m.Attachments {
+			ext := strings.ToLower(attachment.FileType)
+			if (ext == ".png" || ext == ".jpg" || ext == ".jpeg") && strings.TrimSpace(attachment.Content) == "" {
+				content += "\n[历史图片原图未在本轮提供；如需重新查看细节，请用户重新附加图片，不要根据文件名推测内容。]"
+			}
+		}
 	}
 	return chat.Message{Role: "user", Content: content}
 }

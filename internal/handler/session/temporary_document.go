@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"mime"
@@ -81,6 +82,33 @@ func (h *Handler) UploadTemporaryDocument(c *gin.Context) {
 			options.ImageUnderstanding = agent.Config.AttachmentImageUnderstanding
 			options.OCRMaxPages = agent.Config.AttachmentOCRMaxPages
 		}
+	}
+	if ext == "png" || ext == "jpg" || ext == "jpeg" {
+		if agent == nil || !agent.Config.ImageUploadEnabled {
+			c.Error(apperrors.NewBadRequestError("image upload is not enabled"))
+			return
+		}
+		modelTenantID := resourceTenantID
+		if modelTenantID == 0 {
+			modelTenantID = c.GetUint64(types.TenantIDContextKey.String())
+		}
+		modelCtx := context.WithValue(ctx, types.TenantIDContextKey, modelTenantID)
+		supportsVision, err := h.attachmentChatSupportsVision(modelCtx, agent, strings.TrimSpace(c.PostForm("summary_model_id")))
+		if err != nil {
+			c.Error(apperrors.NewBadRequestError(err.Error()))
+			return
+		}
+		if !supportsVision && agent.Config.VLMModelID == "" {
+			c.Error(apperrors.NewBadRequestError("select a chat model supporting images or configure a vision model"))
+			return
+		}
+		if !supportsVision {
+			if err := h.validateAttachmentVLM(modelCtx, agent.Config.VLMModelID); err != nil {
+				c.Error(apperrors.NewBadRequestError(err.Error()))
+				return
+			}
+		}
+		options.DirectVision = supportsVision
 	}
 	document, err := h.temporaryDocuments.Create(
 		ctx, c.GetUint64(types.TenantIDContextKey.String()), sessionID,

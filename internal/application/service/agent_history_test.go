@@ -341,3 +341,14 @@ func TestBuildAssistantHistoryMessages_ReplaysReasoningContent(t *testing.T) {
 	assert.Empty(t, got[1].ReasoningContent)
 	assert.Empty(t, got[2].ReasoningContent)
 }
+
+func TestHistoryExplainsUnavailableOriginalImage(t *testing.T) {
+	msg := &types.Message{Content: "read image", Attachments: types.MessageAttachments{{ID: "image", FileType: ".png", FileName: "screenshot.png"}}}
+	got := buildUserHistoryMessage(msg)
+	require.Contains(t, got.Content, "历史图片原图未在本轮提供")
+	require.Empty(t, got.Images)
+	msg.Attachments[0].Content = "previously extracted facts"
+	got = buildUserHistoryMessage(msg)
+	require.NotContains(t, got.Content, "历史图片原图未在本轮提供")
+	require.Contains(t, got.Content, "previously extracted facts")
+}

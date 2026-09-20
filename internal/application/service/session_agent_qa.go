@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/event"
@@ -248,8 +249,13 @@ func (s *sessionService) AgentQA(
 
 	agentQuery := req.Query
 	var agentImageURLs []string
+	if err := validateAgentImageCapability(req, agentModelSupportsVision); err != nil {
+		return err
+	}
+
 	if agentModelSupportsVision && len(req.ImageURLs) > 0 {
 		agentImageURLs = req.ImageURLs
+		ctx = chat.WithRequiredImages(ctx)
 		logger.Infof(ctx, "Agent model supports vision, passing %d image(s) directly", len(agentImageURLs))
 	} else if req.ImageDescription != "" {
 		agentQuery = req.Query + "\n\n[用户上传图片内容]\n" + req.ImageDescription
@@ -644,4 +650,20 @@ func (s *sessionService) configureSkillsFromAgent(
 		agentConfig.SkillsEnabled = false
 		logger.Warnf(ctx, "Unknown SkillsSelectionMode=%s: skills disabled", customAgent.Config.SkillsSelectionMode)
 	}
+}
+
+// validateAgentImageCapability closes the race between attachment preparation
+// and the effective model lookup. Existing OCR text and optional tool images
+// keep their previous behavior.
+func validateAgentImageCapability(req *types.QARequest, supportsVision bool) error {
+	if supportsVision || len(req.ImageURLs) == 0 {
+		return nil
+	}
+	for _, attachment := range req.Attachments {
+		ext := strings.ToLower(attachment.FileType)
+		if (ext == ".png" || ext == ".jpg" || ext == ".jpeg") && strings.TrimSpace(attachment.Content) == "" {
+			return fmt.Errorf("selected chat model no longer supports image input; select a vision model and retry")
+		}
+	}
+	return nil
 }

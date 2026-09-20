@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/common"
@@ -19,6 +20,29 @@ const toolErrorHint = "\n\n[Analyze the error above and try a different approach
 type ToolRegistry struct {
 	tools             map[string]types.Tool
 	maxToolOutputSize int // maximum chars for tool output (0 = use DefaultMaxToolOutput)
+}
+
+// DisableTools removes tools from this run's registry. MCP tools are
+// namespaced as mcp_<service>_<tool>, so a logical tool name also matches the
+// suffix after a separator. Removing the tool enforces the policy for both
+// model-visible definitions and execution.
+func (r *ToolRegistry) DisableTools(names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	disabled := make([]string, 0, len(names))
+	for registered := range r.tools {
+		for _, name := range names {
+			if registered != name && !strings.HasSuffix(registered, "_"+name) {
+				continue
+			}
+			delete(r.tools, registered)
+			disabled = append(disabled, registered)
+			break
+		}
+	}
+	sort.Strings(disabled)
+	return disabled
 }
 
 // outputLimitProvider is implemented by tools that expose a caller-configurable

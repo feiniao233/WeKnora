@@ -363,6 +363,7 @@ func (s *sessionService) buildAgentConfig(
 	} else {
 		agentConfig.AllowedTools = tools.DefaultAllowedTools()
 	}
+	agentConfig.DisabledToolNames = append([]string(nil), req.DisabledToolNames...)
 	// Validate per-turn skill choices without revoking mandatory Agent skills.
 	// MCP mentions retain their existing request-level narrowing behavior.
 	isSharedAgent := req.SharedAgentReadOnly

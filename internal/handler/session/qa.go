@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	stdErrors "errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -47,6 +48,7 @@ type qaRequestContext struct {
 	tagIDs                []string
 	mcpServiceIDs         []string
 	skillNames            []string
+	disabledToolNames     []string
 	summaryModelID        string
 	webSearchEnabled      bool
 	mentionedItems        types.MentionedItems
@@ -88,6 +90,7 @@ func (rc *qaRequestContext) buildQARequest() *types.QARequest {
 		TagScopes:           rc.tagScopes,
 		MCPServiceIDs:       rc.mcpServiceIDs,
 		SkillNames:          rc.skillNames,
+		DisabledToolNames:   rc.disabledToolNames,
 		MentionedItems:      rc.mentionedItems,
 		ImageURLs:           imageURLs,
 		ImageDescription:    imageDescription,
@@ -336,6 +339,10 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	tagIDs := dedupRequestStrings(append(request.TagIDs, mentionedIDsByType(request.MentionedItems, "tag")...))
 	mcpServiceIDs := dedupRequestStrings(append(request.MCPServiceIDs, mentionedIDsByType(request.MentionedItems, "mcp")...))
 	skillNames := dedupRequestStrings(append(request.SkillNames, mentionedIDsByType(request.MentionedItems, "skill")...))
+	disabledToolNames, err := normalizeDisabledToolNames(request.DisabledToolNames)
+	if err != nil {
+		return nil, nil, errors.NewBadRequestError(err.Error())
+	}
 	executionContext, agentID, agentTenantID, modelID := buildMessageExecutionContext(
 		ctx,
 		customAgent,
@@ -347,6 +354,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		tagScopes,
 		secutils.SanitizeForLogArray(mcpServiceIDs),
 		secutils.SanitizeForLogArray(skillNames),
+		disabledToolNames,
 		request.WebSearchEnabled,
 	)
 
@@ -377,6 +385,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		tagIDs:                secutils.SanitizeForLogArray(tagIDs),
 		mcpServiceIDs:         secutils.SanitizeForLogArray(mcpServiceIDs),
 		skillNames:            secutils.SanitizeForLogArray(skillNames),
+		disabledToolNames:     disabledToolNames,
 		summaryModelID:        secutils.SanitizeForLog(request.SummaryModelID),
 		webSearchEnabled:      request.WebSearchEnabled,
 		mentionedItems:        convertMentionedItems(request.MentionedItems),
@@ -394,6 +403,25 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	}
 
 	return reqCtx, &request, nil
+}
+
+func normalizeDisabledToolNames(values []string) ([]string, error) {
+	if len(values) > 32 {
+		return nil, stdErrors.New("disabled_tool_names exceeds the maximum of 32 entries")
+	}
+	names := dedupRequestStrings(values)
+	for _, name := range names {
+		if len(name) > 64 || strings.TrimSpace(name) != name {
+			return nil, stdErrors.New("disabled_tool_names contains an invalid tool name")
+		}
+		for _, char := range name {
+			if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_' || char == '-' {
+				continue
+			}
+			return nil, stdErrors.New("disabled_tool_names contains an invalid tool name")
+		}
+	}
+	return names, nil
 }
 
 func decodeAndValidateAttachmentUploads(
@@ -435,6 +463,7 @@ func buildMessageExecutionContext(
 	tagScopes []types.TagScope,
 	mcpServiceIDs []string,
 	skillNames []string,
+	disabledToolNames []string,
 	webSearchEnabled bool,
 ) (types.MessageExecutionContext, string, uint64, string) {
 	locale := types.LanguageFromContextOrDefault(ctx)
@@ -446,6 +475,7 @@ func buildMessageExecutionContext(
 		TagScopes:           cloneTagScopes(tagScopes),
 		MCPServiceIDs:       mcpServiceIDs,
 		SkillNames:          skillNames,
+		DisabledToolNames:   disabledToolNames,
 		WebSearchEnabled:    webSearchEnabled,
 		Locale:              locale,
 		LangfuseTraceparent: langfuse.TraceparentFromContext(ctx),

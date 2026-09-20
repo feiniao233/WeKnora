@@ -17,6 +17,7 @@ type QARequest struct {
 	TagScopes           []TagScope         // Tag-constrained KB scopes from @mentions
 	MCPServiceIDs       []string           // Per-request MCP service IDs from @mentions
 	SkillNames          []string           // Per-request preloaded skill names from @mentions
+	DisabledToolNames   []string           // Trusted per-turn tool exclusions applied after tool registration
 	ImageURLs           []string           // Image URLs for multimodal input
 	ImageDescription    string             // VLM-generated image description (fallback for non-vision models)
 	UserMessageID       string             // Created user message ID

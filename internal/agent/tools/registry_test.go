@@ -142,6 +142,18 @@ func TestListTools_Sorted(t *testing.T) {
 	}
 }
 
+func TestDisableToolsMatchesExactAndNamespacedMCPNames(t *testing.T) {
+	registry := NewToolRegistry()
+	registerMany(t, registry, []string{"thinking", "mcp_Steel_Ops_MCP_submit_rca_report", "submit_rca_report_preview"})
+
+	disabled := registry.DisableTools([]string{"submit_rca_report"})
+
+	require.Equal(t, []string{"mcp_Steel_Ops_MCP_submit_rca_report"}, disabled)
+	require.Equal(t, []string{"submit_rca_report_preview", "thinking"}, registry.ListTools())
+	_, err := registry.GetTool("mcp_Steel_Ops_MCP_submit_rca_report")
+	require.Error(t, err)
+}
+
 // TestRegisterTool_DuplicateRejected guards the first-wins policy that
 // prevents tool execution hijacking via name collision (GHSA-67q9-58vj-32qx).
 // A re-registration must not overwrite the original tool.

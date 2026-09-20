@@ -209,6 +209,7 @@ func (s *agentService) CreateAgentEngine(
 	// of a ready skill. Register it independently of the skills manager so a
 	// fresh or still-installing sandbox still has a shell.
 	s.registerSandboxShellIfAllowed(ctx, toolRegistry, sessionID, config)
+	disabledTools := toolRegistry.DisableTools(config.DisabledToolNames)
 
 	// 3. Resolve knowledge base and selected document metadata
 	kbInfos, selectedDocs := s.resolveKBAndDocInfos(ctx, config)
@@ -274,6 +275,10 @@ func (s *agentService) CreateAgentEngine(
 			logger.Infof(ctx, "Skills manager initialized with %d skills",
 				len(skillsManager.GetAllMetadata()))
 		}
+	}
+	disabledTools = append(disabledTools, toolRegistry.DisableTools(config.DisabledToolNames)...)
+	if len(disabledTools) > 0 {
+		logger.Infof(ctx, "Disabled %d tool(s) for this turn: %v", len(disabledTools), disabledTools)
 	}
 
 	return engine, nil

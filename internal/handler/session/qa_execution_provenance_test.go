@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -15,7 +16,7 @@ func TestExecutionProvenanceCapturesConfigWithoutChangingSuggestionCache(t *test
 	}}
 	requested := []string{"requested-skill"}
 	capture := func() types.MessageExecutionContext {
-		snapshot, id, tenant, model := buildMessageExecutionContext(context.Background(), agent, 1, "", nil, nil, nil, nil, nil, requested, false)
+		snapshot, id, tenant, model := buildMessageExecutionContext(context.Background(), agent, 1, "", nil, nil, nil, nil, nil, requested, []string{"submit_rca_report"}, false)
 		require.Equal(t, "agent", id)
 		require.Equal(t, uint64(1), tenant)
 		require.Equal(t, "model", model)
@@ -24,7 +25,7 @@ func TestExecutionProvenanceCapturesConfigWithoutChangingSuggestionCache(t *test
 	original := capture()
 	require.Regexp(t, `^sha256-v1:[a-f0-9]{64}$`, original.ExecutionConfigHash)
 	require.Equal(t, original.ExecutionConfigHash, capture().ExecutionConfigHash)
-	override, _, _, model := buildMessageExecutionContext(context.Background(), agent, 1, "override-model", nil, nil, nil, nil, nil, requested, false)
+	override, _, _, model := buildMessageExecutionContext(context.Background(), agent, 1, "override-model", nil, nil, nil, nil, nil, requested, []string{"submit_rca_report"}, false)
 	require.Equal(t, "override-model", model)
 	require.NotEqual(t, original.ExecutionConfigHash, override.ExecutionConfigHash)
 	agent.Config.SystemPrompt = "edited private prompt"
@@ -37,6 +38,7 @@ func TestExecutionProvenanceCapturesConfigWithoutChangingSuggestionCache(t *test
 	requested[0] = "replacement-request"
 	require.Equal(t, []string{"rca-diagnosis"}, original.SelectedSkillNames)
 	require.Equal(t, []string{"requested-skill"}, original.SkillNames)
+	require.Equal(t, []string{"submit_rca_report"}, original.DisabledToolNames)
 	value, err := original.Value()
 	require.NoError(t, err)
 	var restored types.MessageExecutionContext
@@ -47,7 +49,18 @@ func TestExecutionProvenanceCapturesConfigWithoutChangingSuggestionCache(t *test
 	require.NotContains(t, string(encoded), "private prompt")
 }
 
+func TestNormalizeDisabledToolNames(t *testing.T) {
+	names, err := normalizeDisabledToolNames([]string{"submit_rca_report", "submit_rca_report"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"submit_rca_report"}, names)
+
+	for _, values := range [][]string{{" bad"}, {"bad/tool"}, {strings.Repeat("x", 65)}} {
+		_, err := normalizeDisabledToolNames(values)
+		require.Error(t, err)
+	}
+}
+
 func TestExecutionProvenanceMissingAgentHasNoFingerprint(t *testing.T) {
-	snapshot, _, _, _ := buildMessageExecutionContext(context.Background(), nil, 1, "model", nil, nil, nil, nil, nil, nil, false)
+	snapshot, _, _, _ := buildMessageExecutionContext(context.Background(), nil, 1, "model", nil, nil, nil, nil, nil, nil, nil, false)
 	require.Empty(t, snapshot.ExecutionConfigHash)
 }

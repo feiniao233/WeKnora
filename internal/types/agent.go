@@ -156,6 +156,10 @@ type AgentConfig struct {
 	// hint; skill pins are read by the runtime before the first model call.
 	PinnedMCPServiceIDs []string `json:"-"`
 	PinnedSkillNames    []string `json:"-"`
+	// DisabledToolNames narrows this turn's tool registry. Entries match either
+	// an exact registered name or the original suffix of a namespaced MCP tool.
+	// It is runtime-only and must come from the trusted request boundary.
+	DisabledToolNames []string `json:"-"`
 	// SharedAgentReadOnly prevents a shared agent from mutating resources in
 	// its source workspace. It is set from the verified share relation, never
 	// inferred from a client-provided tenant ID.

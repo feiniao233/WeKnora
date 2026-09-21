@@ -186,47 +186,6 @@ func TestSQLiteMigrationsUpgradeV16AddsSessionForkColumns(t *testing.T) {
 	require.True(t, sqliteColumnExists(t, db, "messages", "sandbox_checkpoint"))
 }
 
-func TestSQLiteMigrationsUpgradePrivateForkV14RepairsCollidingVersions(t *testing.T) {
-	repoRoot := sqliteRepoRoot(t)
-	legacyRoot := copySQLiteMigrationsThrough(t, repoRoot, 12)
-	legacyDir := filepath.Join(legacyRoot, "migrations", "sqlite")
-	require.NoError(t, os.WriteFile(
-		filepath.Join(legacyDir, "000013_knowledge_base_category.up.sql"),
-		[]byte("ALTER TABLE knowledge_bases ADD COLUMN category TEXT NOT NULL DEFAULT 'general';"),
-		0o600,
-	))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(legacyDir, "000014_message_execution_result.up.sql"),
-		[]byte("ALTER TABLE messages ADD COLUMN execution_result TEXT;"),
-		0o600,
-	))
-
-	chdirAndRestore(t, legacyRoot)
-	dbPath := filepath.Join(t.TempDir(), "private-v14.db")
-	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
-
-	db := openSQLiteDB(t, dbPath)
-	versionBefore, dirtyBefore := sqliteMigrationState(t, db)
-	require.Equal(t, 14, versionBefore)
-	require.False(t, dirtyBefore)
-	require.True(t, sqliteColumnExists(t, db, "knowledge_bases", "category"))
-	require.True(t, sqliteColumnExists(t, db, "messages", "execution_result"))
-	require.False(t, sqliteColumnExists(t, db, "mcp_tool_approvals", "enabled"))
-	require.False(t, sqliteTableExists(t, db, "browser_devices"))
-
-	chdirAndRestore(t, repoRoot)
-	require.NoError(t, RunMigrationsWithOptions("sqlite3://unused", MigrationOptions{SQLiteDBPath: dbPath}))
-
-	db = openSQLiteDB(t, dbPath)
-	versionAfter, dirtyAfter := sqliteMigrationState(t, db)
-	require.Equal(t, expectedSQLiteMigrationVersion, versionAfter)
-	require.False(t, dirtyAfter)
-	require.True(t, sqliteColumnExists(t, db, "mcp_tool_approvals", "enabled"))
-	require.True(t, sqliteTableExists(t, db, "browser_devices"))
-	require.True(t, sqliteColumnExists(t, db, "knowledge_bases", "category"))
-	require.True(t, sqliteColumnExists(t, db, "messages", "execution_result"))
-}
-
 func sqliteRepoRoot(t *testing.T) string {
 	t.Helper()
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))

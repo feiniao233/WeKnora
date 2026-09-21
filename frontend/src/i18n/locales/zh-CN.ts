@@ -6267,8 +6267,6 @@ export default {
       title: '生成的文件',
       empty: '本次未生成可下载的文件',
       preview: '预览',
-      previewTitle: 'HTML 报告预览',
-      previewFailed: '预览失败，请稍后重试',
       previewBack: '返回列表',
       collecting: '正在保存生成的文件…',
       delete: '删除',

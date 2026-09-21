@@ -71,7 +71,6 @@
                     shape="square"
                     size="small"
                     :title="$t('agent.artifactDrawer.download')"
-                    :aria-label="$t('agent.artifactDrawer.download')"
                     :loading="!!downloading[previewItem.index]"
                     @click="handleDownload(previewItem)"
                 >
@@ -97,7 +96,6 @@
                 :file-type="previewFileType"
                 :file-name="previewItem.file_name"
                 :active="internalVisible"
-                :load-blob="embeddedMode ? loadPreviewBlob : undefined"
                 fill-height
             />
         </div>
@@ -133,7 +131,6 @@
                     shape="square"
                     size="small"
                     :title="$t('agent.artifactDrawer.preview')"
-                    :aria-label="$t('agent.artifactDrawer.preview')"
                     @click.stop="openPreview(item)"
                 >
                     <template #icon>
@@ -146,7 +143,6 @@
                     shape="square"
                     size="small"
                     :title="$t('agent.artifactDrawer.download')"
-                    :aria-label="$t('agent.artifactDrawer.download')"
                     :loading="!!downloading[item.index]"
                     @click.stop="handleDownload(item)"
                 >
@@ -183,7 +179,6 @@ import { computed, onMounted, onUnmounted, ref, watch, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { downloadArtifact, listMessageArtifacts, type ArtifactMeta } from '@/api/chat'
-import { downloadEmbedMessageArtifact, listEmbedMessageArtifacts } from '@/api/embed'
 import { getFileIcon } from '@/utils/files'
 import { resolveFilePreviewExt } from '@/utils/filePreview'
 import DocumentPreview from '@/components/document-preview.vue'
@@ -198,11 +193,6 @@ const props = defineProps<{
     sessionId: string
     messageId: string
     artifacts?: ArtifactMeta[]
-    embeddedMode?: boolean
-    embedChannelId?: string
-    embedToken?: string
-    embedSessionSig?: string
-    embedVisitorId?: string
     /**
      * Open straight into this artifact's preview instead of the list. Set when
      * the drawer is opened by clicking an inline artifact card in the answer,
@@ -338,7 +328,7 @@ watch(
         if (!props.sessionId || !props.messageId) return
         loading.value = true
         try {
-            const res: any = await fetchArtifactList()
+            const res: any = await listMessageArtifacts(props.sessionId, props.messageId)
             const data = (res && (res.data || res)) as ArtifactMeta[] | undefined
             fetched.value = Array.isArray(data) ? data : []
             applyRequestedPreview()
@@ -378,45 +368,6 @@ function handleClose(context?: { trigger?: string }) {
     emit('update:visible', false)
 }
 
-function embedCredentials() {
-    if (!props.embedChannelId || !props.embedToken || !props.embedSessionSig) {
-        throw new Error('embed artifact credentials are incomplete')
-    }
-    return {
-        channelId: props.embedChannelId,
-        token: props.embedToken,
-        sessionSig: props.embedSessionSig,
-        visitorId: props.embedVisitorId || '',
-    }
-}
-
-function fetchArtifactList() {
-    if (!props.embeddedMode) return listMessageArtifacts(props.sessionId, props.messageId)
-    const auth = embedCredentials()
-    return listEmbedMessageArtifacts(
-        auth.channelId,
-        auth.token,
-        props.sessionId,
-        props.messageId,
-        auth.sessionSig,
-        auth.visitorId,
-    )
-}
-
-function fetchArtifact(item: ArtifactMeta): Promise<Blob> {
-    if (!props.embeddedMode) return downloadArtifact(props.sessionId, props.messageId, item.index)
-    const auth = embedCredentials()
-    return downloadEmbedMessageArtifact(
-        auth.channelId,
-        auth.token,
-        props.sessionId,
-        props.messageId,
-        item.index,
-        auth.sessionSig,
-        auth.visitorId,
-    )
-}
-
 function openPreview(item: ArtifactMeta) {
     previewItem.value = item
     previewOpenedDirectly.value = false
@@ -425,11 +376,6 @@ function openPreview(item: ArtifactMeta) {
 function closePreview() {
     previewItem.value = null
     previewOpenedDirectly.value = false
-}
-
-function loadPreviewBlob(): Promise<Blob> {
-    if (!previewItem.value) return Promise.reject(new Error('Missing preview artifact'))
-    return fetchArtifact(previewItem.value)
 }
 
 function formatFileSize(size: number): string {
@@ -459,7 +405,7 @@ async function handleDownload(item: ArtifactMeta) {
     }
     downloading[item.index] = true
     try {
-        const blob = await fetchArtifact(item)
+        const blob = await downloadArtifact(props.sessionId, props.messageId, item.index)
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url

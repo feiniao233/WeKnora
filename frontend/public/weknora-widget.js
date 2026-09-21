@@ -2,7 +2,7 @@
  * WeKnora embed widget SDK — floating chat launcher.
  *
  * Programmatic:
- *   WeKnora.init({ channel, token, tokenEndpointHeaders, position, primaryColor, title, baseUrl })
+ *   WeKnora.init({ channel, token, position, primaryColor, title, baseUrl })
  *   WeKnora.open() | close() | toggle() | destroy()
  *   WeKnora.on('ready', fn) | off('ready', fn)
  *
@@ -34,8 +34,6 @@
   var DEFAULT_TITLE = 'AI Assistant';
   var DEFAULT_WIDTH = 400;
   var DEFAULT_HEIGHT = 600;
-  var CHAT_ICON = '<svg aria-hidden="true" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>';
-  var CLOSE_ICON = '<svg aria-hidden="true" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
 
   var instance = null;
   var listeners = {};
@@ -72,7 +70,6 @@
     // session token (by server-side exchange of the publish token). The widget
     // fetches a fresh token here and refreshes it before expiry.
     var tokenEndpoint = opts.tokenEndpoint || opts.token_endpoint || '';
-    var tokenEndpointHeaders = opts.tokenEndpointHeaders || opts.token_endpoint_headers || {};
     if (!channelId || (!staticToken && !tokenEndpoint)) {
       console.warn('[WeKnora] channel and (token or tokenEndpoint) are required');
       return null;
@@ -101,15 +98,10 @@
       if (staticToken) return Promise.resolve(staticToken);
       if (currentToken && !force) return Promise.resolve(currentToken);
       if (tokenInFlight) return tokenInFlight;
-      var requestHeaders = { Accept: 'application/json' };
-      Object.keys(tokenEndpointHeaders).forEach(function (name) {
-        var value = tokenEndpointHeaders[name];
-        if (typeof value === 'string' && value) requestHeaders[name] = value;
-      });
       tokenInFlight = fetch(tokenEndpoint, {
         method: 'GET',
         credentials: 'include',
-        headers: requestHeaders,
+        headers: { Accept: 'application/json' },
       })
         .then(function (res) {
           if (!res.ok) throw new Error('token endpoint HTTP ' + res.status);
@@ -165,7 +157,7 @@
     var launcher = document.createElement('button');
     launcher.type = 'button';
     launcher.setAttribute('aria-label', title);
-    launcher.innerHTML = CHAT_ICON;
+    launcher.textContent = '💬';
     launcher.style.cssText = [
       'position:fixed',
       'z-index:2147483000',
@@ -174,9 +166,7 @@
       'border-radius:50%',
       'border:none',
       'cursor:pointer',
-      'display:flex',
-      'align-items:center',
-      'justify-content:center',
+      'font-size:24px',
       'box-shadow:0 4px 16px rgba(0,0,0,.18)',
       'background:' + primaryColor,
       'color:#fff',
@@ -343,7 +333,7 @@
     function setOpen(next) {
       panelOpen = !!next;
       panel.style.display = panelOpen ? 'block' : 'none';
-      launcher.innerHTML = panelOpen ? CLOSE_ICON : CHAT_ICON;
+      launcher.textContent = panelOpen ? '✕' : '💬';
       if (panelOpen) {
         emit('open', { channelId: channelId });
       } else {

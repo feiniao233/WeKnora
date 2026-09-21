@@ -234,9 +234,8 @@ export function get<T = any>(url: string, config?: any): Promise<WithStatus<T>> 
   return instance.get<T>(url, config) as unknown as Promise<WithStatus<T>>;
 }
 
-export async function getDown(url: string, config: any = {}): Promise<Blob> {
+export async function getDown(url: string): Promise<Blob> {
   const res = await instance.get<Blob>(url, {
-    ...config,
     responseType: "blob",
   }) as unknown as Blob;
   return res

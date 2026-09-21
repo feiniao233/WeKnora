@@ -994,8 +994,6 @@ export default {
       title: 'Generated files',
       empty: 'No downloadable files were generated this turn.',
       preview: 'Preview',
-      previewTitle: 'HTML report preview',
-      previewFailed: 'Preview failed, please retry.',
       previewBack: 'Back to list',
       collecting: 'Saving generated files…',
       delete: 'Delete',

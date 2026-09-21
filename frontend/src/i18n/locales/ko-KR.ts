@@ -6265,8 +6265,6 @@ export default {
       title: '생성된 파일',
       empty: '이번 회차에서 다운로드 가능한 파일이 없습니다.',
       preview: '미리보기',
-      previewTitle: 'HTML 보고서 미리보기',
-      previewFailed: '미리보기에 실패했습니다. 다시 시도해 주세요.',
       previewBack: '목록으로',
       collecting: '생성된 파일을 저장하는 중…',
       delete: '삭제',

@@ -1,6 +1,8 @@
 ---
 name: rca-diagnosis
 description: 基于权威只读证据分析运维告警及疑似根因。适用于根因分析、故障分析、告警关联、网络接口中断、IP 冲突、带宽拥塞及资产故障原因排查。
+metadata:
+  version: "1.2.0"
 ---
 
 # 根因分析诊断

@@ -28,6 +28,15 @@ class FakeClient:
         self.mcps = []
         self.agents = []
         self.catalogs = []
+        self.installer_agent = {
+            "id": "builtin-skill-installer",
+            "name": "技能安装器",
+            "description": "",
+            "avatar": "",
+            "config": {"model_id": "old-model"},
+        }
+        self.installed_skills = {}
+        self.install_status = "ready"
         self.next_id = 1
 
     def response(self, data):
@@ -52,8 +61,12 @@ class FakeClient:
             return self.response(self.mcps)
         if parts == ["api", "v1", "agents"]:
             return self.response(self.agents)
+        if parts == ["api", "v1", "agents", "builtin-skill-installer"]:
+            return self.response(self.installer_agent)
         if parts == ["api", "v1", "skills", "catalog"]:
             return self.response(self.catalogs)
+        if parts[:3] == ["api", "v1", "sandbox-configs"] and parts[-1] == "skills":
+            return self.response(self.installed_skills.get(parts[3], []))
         raise AssertionError(f"unexpected GET {path}")
 
     def post_json(self, path, payload):
@@ -76,6 +89,16 @@ class FakeClient:
             return self.response(row)
         if parts[:4] == ["api", "v1", "skills", "catalog"] and parts[-1] == "install":
             installs = {config_id: self.new_id("skill") for config_id in payload["sandbox_config_ids"]}
+            for config_id, skill_id in installs.items():
+                self.installed_skills[config_id] = [
+                    {
+                        "id": skill_id,
+                        "name": "rca-diagnosis",
+                        "version": "1.2.0",
+                        "status": self.install_status,
+                        "error": "installer failed" if self.install_status == "failed" else "",
+                    }
+                ]
             return self.response({"installs": installs})
         raise AssertionError(f"unexpected POST {path}")
 
@@ -94,6 +117,9 @@ class FakeClient:
             row.update(payload)
             return self.response(row)
         if parts[:3] == ["api", "v1", "agents"]:
+            if parts[3] == "builtin-skill-installer":
+                self.installer_agent.update(payload)
+                return self.response(self.installer_agent)
             row = self.find(self.agents, parts[3])
             row.update(payload)
             return self.response(row)
@@ -171,6 +197,7 @@ class BootstrapTest(unittest.TestCase):
         self.assertEqual(self.client.agents[0]["config"]["rerank_model_id"], "rerank-model")
         self.assertEqual(self.client.agents[0]["config"]["sandbox_config_id"], "sandbox-config")
         self.assertEqual(self.client.agents[0]["config"]["selected_skills"], ["rca-diagnosis"])
+        self.assertEqual(self.client.installer_agent["config"]["model_id"], "chat-model")
         self.assertEqual(first["resource_ids"]["skill_catalog_id"], self.client.catalogs[0]["id"])
         install_call = (
             "POST",
@@ -211,6 +238,8 @@ class BootstrapTest(unittest.TestCase):
         phases = {item["phase"]: item for item in summary["phases"]}
         self.assertEqual(phases["skill_catalog"]["endpoint"], "/api/v1/skills/catalog")
         self.assertEqual(phases["skill_install"]["endpoint"], "/api/v1/skills/catalog/{id}/install")
+        self.assertEqual(phases["skill_ready"]["endpoint"], "/api/v1/sandbox-configs/{id}/skills")
+        self.assertEqual(summary["config"]["skill_installer_model_id"], "chat-model")
         self.assertEqual(summary["config"]["sandbox_config_id"], "sandbox-placeholder")
 
     def test_empty_knowledge_directory_creates_resources_without_uploads(self):
@@ -220,6 +249,12 @@ class BootstrapTest(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         upload_path = f"/api/v1/knowledge-bases/{result['resource_ids']['knowledge_base_id']}/knowledge/file"
         self.assertFalse(any(call[:2] == ("FILE", upload_path) for call in self.client.calls))
+
+    def test_failed_skill_install_stops_before_agent_creation(self):
+        self.client.install_status = "failed"
+        with self.assertRaisesRegex(RuntimeError, "installer failed"):
+            self.run_bootstrap()
+        self.assertEqual(self.client.agents, [])
 
     def test_ip_configuration_change_routes_to_conflict_verification(self):
         skill = (Path(__file__).parents[1] / "skills/catalog/rca-diagnosis/SKILL.md").read_text(encoding="utf-8")

@@ -242,6 +242,25 @@ Use scripts/extract.py to pull text out of a PDF.
 		require.Equal(t, "1.2.3", bundle.Version)
 	})
 
+	t.Run("reads standard metadata version", func(t *testing.T) {
+		data := zipBundle(t, map[string]string{
+			"SKILL.md": `---
+name: pdf-tools
+description: Extract text from PDF files
+metadata:
+  version: "1.2.3"
+---
+
+Use scripts/extract.py to pull text out of a PDF.
+`,
+		})
+
+		bundle, err := ParseSkillBundle(data)
+
+		require.NoError(t, err)
+		require.Equal(t, "1.2.3", bundle.Version)
+	})
+
 	t.Run("reads UTF-8 BOM frontmatter including version", func(t *testing.T) {
 		manifest := "\ufeff---\nname: pdf-tools\nversion: 1.2.3\n" +
 			"description: Extract text from PDF files\n---\nUse PDF tools.\n"

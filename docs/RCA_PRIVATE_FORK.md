@@ -27,7 +27,7 @@ Skill 与知识库是两个独立模块。Skill 保存诊断步骤、停止条�
    - `query_operational_evidence`
    - `submit_rca_report`（仅提交待人工确认的报告，不执行处置）
 3. Steel 只调用同源 `/back/rca/ai/*` BFF；WeKnora API Key 只存于 `mcp-app` 服务端，不进入浏览器。
-4. 资源通过 `scripts/rca_bootstrap.py` 幂等创建；RCA Skill 注册到工作区 Catalog 并安装到指定 Sandbox，不通过 SQL 写入 WeKnora 数据库。
+4. 资源通过 `scripts/rca_bootstrap.py` 幂等创建；RCA Skill 注册到工作区 Catalog 并安装到指定 Sandbox，安装器模型会被显式固定，且脚本等待技能进入 `ready` 后才继续创建 Agent，不通过 SQL 写入 WeKnora 数据库。
 5. Agent 只给出诊断、证据、建议与报告，不声称已经执行处置。写操作和外部消息推送必须进入独立工具，并由 Steel 展示确认步骤。
 
 ## 保留与裁剪
@@ -73,6 +73,8 @@ python3 scripts/rca_bootstrap.py \
   --embedding-model-id <id> \
   --sandbox-config-id <id>
 ```
+
+技能安装器默认复用 `--model-id`。需要使用不同模型时额外传入 `--skill-installer-model-id <id>`。技能安装失败或等待超时会使初始化直接失败，不会留下指向未就绪技能的 RCA Agent。
 
 随后在隔离环境验证数据库迁移、知识入库、检索、Agent 工具白名单、原生 SSE 对话、报告确认和旧会话读取。通过一条真实告警试点后再更新生产镜像标签。
 

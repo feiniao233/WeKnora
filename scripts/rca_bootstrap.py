@@ -12,6 +12,7 @@ import mimetypes
 import os
 import ssl
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 import zipfile
@@ -31,6 +32,9 @@ DEFAULT_SKILL_DIR = Path(__file__).resolve().parents[1] / "skills/catalog/rca-di
 KB_NAME = "根因分析运维知识库"
 MCP_NAME = "Steel Ops MCP (只读)"
 AGENT_NAME = "根因分析助手"
+SKILL_INSTALLER_AGENT_ID = "builtin-skill-installer"
+SKILL_INSTALL_TIMEOUT_SECONDS = 300
+SKILL_INSTALL_POLL_SECONDS = 2
 AGENT_TOOLS = [
     "thinking",
     "todo_write",
@@ -92,6 +96,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--model-id",
         required=True,
         help="Chat model id for the ReAct agent.",
+    )
+    parser.add_argument(
+        "--skill-installer-model-id",
+        default="",
+        help="Chat model id for the built-in skill installer; defaults to --model-id.",
     )
     parser.add_argument(
         "--rerank-model-id",
@@ -387,6 +396,7 @@ class RCAConfig:
         state_file: Path,
         ops_mcp_url: str,
         sandbox_config_id: str,
+        skill_installer_model_id: str = "",
         dry_run: bool = False,
     ) -> None:
         self.base_url = base_url
@@ -397,6 +407,7 @@ class RCAConfig:
         self.state_file = state_file
         self.ops_mcp_url = ops_mcp_url
         self.sandbox_config_id = sandbox_config_id
+        self.skill_installer_model_id = skill_installer_model_id or model_id
         self.dry_run = dry_run
 
 
@@ -407,10 +418,14 @@ class RCABootstrapper:
         workspace_api_key: str,
         ops_mcp_api_key: str,
         client: Optional[ApiClient] = None,
+        sleep=time.sleep,
+        monotonic=time.monotonic,
     ) -> None:
         self.config = config
         self.ops_mcp_api_key = ops_mcp_api_key
         self.client = client or ApiClient(config.base_url, workspace_api_key)
+        self.sleep = sleep
+        self.monotonic = monotonic
         self.state = BootstrapState.load(config.state_file)
         self.summary: Dict[str, Any] = {
             "dry_run": config.dry_run,
@@ -599,9 +614,59 @@ class RCABootstrapper:
             raise RuntimeError(f"Skill install failed: {json.dumps(install, ensure_ascii=False)}")
         self._record("skill_catalog", endpoint="/api/v1/skills/catalog", action="registered", id=catalog_id)
         self._record("skill_install", endpoint="/api/v1/skills/catalog/{id}/install", action="requested")
+        skill = self._wait_for_skill_ready()
+        self._record(
+            "skill_install",
+            endpoint="/api/v1/sandbox-configs/{id}/skills",
+            action="ready",
+            id=str(skill.get("id", "")),
+            version=str(skill.get("version", "")),
+        )
         self.state.set_id("skill_catalog_id", catalog_id)
         self.state.set_id("sandbox_config_id", self.config.sandbox_config_id)
         return catalog_id
+
+    def _ensure_skill_installer_model(self) -> None:
+        endpoint = f"/api/v1/agents/{SKILL_INSTALLER_AGENT_ID}"
+        current = unwrap_api_payload(self._get(endpoint))
+        if not isinstance(current, dict):
+            raise RuntimeError("Unexpected built-in skill installer agent payload")
+        config = current.get("config") if isinstance(current.get("config"), dict) else {}
+        if config.get("model_id") == self.config.skill_installer_model_id:
+            self._record("skill_installer_model", endpoint=endpoint, action="reused")
+            return
+        updated_config = {**config, "model_id": self.config.skill_installer_model_id}
+        self._put(
+            endpoint,
+            {
+                "name": current.get("name", ""),
+                "description": current.get("description", ""),
+                "avatar": current.get("avatar", ""),
+                "config": updated_config,
+            },
+        )
+        self._record("skill_installer_model", endpoint=endpoint, action="updated")
+
+    def _wait_for_skill_ready(self) -> Dict[str, Any]:
+        endpoint = (
+            "/api/v1/sandbox-configs/"
+            f"{urllib.parse.quote(self.config.sandbox_config_id, safe='')}/skills"
+        )
+        deadline = self.monotonic() + SKILL_INSTALL_TIMEOUT_SECONDS
+        while True:
+            skill = self._find_by_name(as_list(self._get(endpoint)), "rca-diagnosis")
+            if skill:
+                status = str(skill.get("status", ""))
+                if status == "ready":
+                    return skill
+                if status == "failed":
+                    detail = str(skill.get("error", "")).strip() or "unknown installer error"
+                    raise RuntimeError(f"RCA skill installation failed: {detail}")
+            if self.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"Timed out waiting for RCA skill installation after {SKILL_INSTALL_TIMEOUT_SECONDS}s"
+                )
+            self.sleep(SKILL_INSTALL_POLL_SECONDS)
 
     def _agent_payload(self, kb_id: str, mcp_id: str) -> Dict[str, Any]:
         return {
@@ -683,6 +748,7 @@ class RCABootstrapper:
             raise RuntimeError("chat, rerank, embedding model, and sandbox config ids are required")
         kb_id = self._ensure_kb()
         mcp_id = self._ensure_mcp()
+        self._ensure_skill_installer_model()
         catalog_id = self._ensure_skill()
         agent_id = self._ensure_agent(kb_id, mcp_id)
         self.state.set_id("version", STATE_VERSION)
@@ -713,7 +779,9 @@ def dry_run_summary(config: RCAConfig, state: Optional[BootstrapState]) -> Dict[
             {"phase": "mcp", "endpoint": "/api/v1/mcp-services", "action": "get/create-by-name"},
             {"phase": "mcp_test", "endpoint": "/api/v1/mcp-services/{id}/test", "action": f"exact-match-tools {OPS_TOOLS}"},
             {"phase": "skill_catalog", "endpoint": "/api/v1/skills/catalog", "action": "register-or-update-zip"},
+            {"phase": "skill_installer_model", "endpoint": "/api/v1/agents/builtin-skill-installer", "action": "pin-model"},
             {"phase": "skill_install", "endpoint": "/api/v1/skills/catalog/{id}/install", "action": "install-to-sandbox"},
+            {"phase": "skill_ready", "endpoint": "/api/v1/sandbox-configs/{id}/skills", "action": "wait-until-ready"},
             {"phase": "agent", "endpoint": "/api/v1/agents", "action": "get/create-by-name"},
         ],
         "config": {
@@ -722,6 +790,7 @@ def dry_run_summary(config: RCAConfig, state: Optional[BootstrapState]) -> Dict[
             "mcp_name": MCP_NAME,
             "agent_name": AGENT_NAME,
             "rerank_model_id": config.rerank_model_id,
+            "skill_installer_model_id": config.skill_installer_model_id,
             "sandbox_config_id": config.sandbox_config_id,
             "state_file": str(config.state_file),
         },
@@ -748,6 +817,7 @@ def build_bootstrap_config(args: argparse.Namespace) -> Tuple[RCAConfig, str, st
             state_file=Path(args.state_file).expanduser(),
             ops_mcp_url=args.ops_mcp_url,
             sandbox_config_id=args.sandbox_config_id.strip(),
+            skill_installer_model_id=args.skill_installer_model_id.strip(),
             dry_run=args.dry_run,
         ),
         workspace_key,
@@ -767,6 +837,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             state_file=Path(args.state_file).expanduser(),
             ops_mcp_url=args.ops_mcp_url,
             sandbox_config_id=args.sandbox_config_id.strip() or "sandbox-placeholder",
+            skill_installer_model_id=args.skill_installer_model_id.strip(),
             dry_run=True,
         )
         state = BootstrapState.load(config.state_file)

@@ -525,13 +525,19 @@ func parseSkillBundleVersion(manifest string) (string, error) {
 	}
 
 	var metadata struct {
-		Version string `yaml:"version"`
+		Version  string `yaml:"version"`
+		Metadata struct {
+			Version string `yaml:"version"`
+		} `yaml:"metadata"`
 	}
 	frontmatter := strings.Join(lines[frontmatterStart+1:frontmatterEnd], "\n")
 	if _, err := skills.UnmarshalSkillFrontmatter(frontmatter, &metadata); err != nil {
 		return "", err
 	}
-	return metadata.Version, nil
+	if metadata.Version != "" {
+		return metadata.Version, nil
+	}
+	return metadata.Metadata.Version, nil
 }
 
 // stripSkillRootPrefix re-roots the archive at the directory holding SKILL.md.

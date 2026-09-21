@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	agenttools "github.com/Tencent/WeKnora/internal/agent/tools"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -22,14 +23,14 @@ func (e *AgentEngine) loadPinnedSkills(ctx context.Context, state *types.AgentSt
 	step := types.AgentStep{Timestamp: time.Now()}
 	var content strings.Builder
 	for i, name := range e.config.PinnedSkillNames {
-		args, err := json.Marshal(map[string]string{"skill_name": name})
+		args, err := json.Marshal(map[string]string{"path": "skill://" + name + "/SKILL.md"})
 		if err != nil {
 			return nil, err
 		}
 		call := types.LLMToolCall{
 			ID:       fmt.Sprintf("%sskill-%s-%d", types.PipelineToolCallIDPrefix, messageID, i),
 			Type:     "function",
-			Function: types.FunctionCall{Name: "read_skill", Arguments: string(args)},
+			Function: types.FunctionCall{Name: agenttools.ToolReadFile, Arguments: string(args)},
 		}
 		e.executeSingleToolCall(ctx, call, i, &step, 0, 1, sessionID, messageID)
 		result := step.ToolCalls[len(step.ToolCalls)-1].Result
@@ -41,6 +42,6 @@ func (e *AgentEngine) loadPinnedSkills(ctx context.Context, state *types.AgentSt
 		content.WriteString(result.Output)
 	}
 	state.RoundSteps = append(state.RoundSteps, step)
-	messages = append(messages, chat.Message{Role: "user", Content: "The runtime has loaded the explicitly selected skills with read_skill. Follow these skill instructions for this turn; further resource files may be read with read_skill.\n" + content.String()})
+	messages = append(messages, chat.Message{Role: "user", Content: "The runtime has loaded the explicitly selected skills with read_file. Follow these skill instructions for this turn; further resources may be read from their skill:// paths.\n" + content.String()})
 	return messages, nil
 }

@@ -67,3 +67,18 @@ func TestSuccessfulRCAReportAcceptsNamespacedToolAndTrimsOuterWhitespace(t *test
 	require.True(t, ok)
 	require.Equal(t, "# 根因分析报告\n\n正文", report)
 }
+
+func TestSuccessfulRCAReportUsesResolvedMCPCallTarget(t *testing.T) {
+	report, ok := successfulRCAReport([]types.ToolCall{{
+		Name: "call_mcp_tool",
+		Args: map[string]any{"tool_ref": "opaque"},
+		Target: &types.ToolCallTarget{
+			Name: "rca__submit_rca_report",
+			Args: map[string]any{"report": "# 目标报告"},
+		},
+		Result: &types.ToolResult{Success: true},
+	}})
+
+	require.True(t, ok)
+	require.Equal(t, "# 目标报告", report)
+}

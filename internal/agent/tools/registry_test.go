@@ -154,6 +154,15 @@ func TestDisableToolsMatchesExactAndNamespacedMCPNames(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestDisableToolsRejectsLaterNamespacedRegistration(t *testing.T) {
+	registry := NewToolRegistry()
+	registry.DisableTools([]string{"submit_rca_report"})
+
+	registry.RegisterDeferredTool(&mockTool{name: "mcp_ops_submit_rca_report"})
+	require.Empty(t, registry.ListTools())
+	require.True(t, registry.isToolDisabled("mcp_ops_submit_rca_report"))
+}
+
 // TestRegisterTool_DuplicateRejected guards the first-wins policy that
 // prevents tool execution hijacking via name collision (GHSA-67q9-58vj-32qx).
 // A re-registration must not overwrite the original tool.

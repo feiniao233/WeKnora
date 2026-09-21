@@ -39,7 +39,7 @@ func TestFailedExecutionIsSavedBeforeCompletion(t *testing.T) {
 	ctx := withExecutionOutcome(context.Background())
 	message := &types.Message{ID: "message", ModelID: "deepseek-test"}
 	stream := &executionTestStream{}
-	handler := NewAgentStreamHandler(ctx, "session", message.ID, "request", 1, time.Now(), message, stream, event.NewEventBus(), nil)
+	handler := NewAgentStreamHandler(ctx, "session", message.ID, "request", 1, time.Now(), message, stream, event.NewEventBus(), nil, nil, nil)
 	handler.deferCompletion = true
 	require.NoError(t, handler.handleFinalAnswer(ctx, event.Event{ID: "answer", Data: event.AgentFinalAnswerData{Content: "已有发现"}}))
 	require.NoError(t, handler.handleError(ctx, event.Event{Data: event.ErrorData{Error: "429 secret-provider-body"}}))
@@ -71,7 +71,7 @@ func TestCompletionReportsSaveFailure(t *testing.T) {
 	ctx := withExecutionOutcome(context.Background())
 	message := &types.Message{ID: "message"}
 	stream := &executionTestStream{}
-	handler := NewAgentStreamHandler(ctx, "session", message.ID, "request", 1, time.Now(), message, stream, event.NewEventBus(), nil)
+	handler := NewAgentStreamHandler(ctx, "session", message.ID, "request", 1, time.Now(), message, stream, event.NewEventBus(), nil, nil, nil)
 	messages := &executionTestMessages{err: errors.New("database unavailable")}
 	require.Error(t, (&Handler{messageService: messages}).completeAssistantMessage(ctx, message, "", ""))
 	require.NoError(t, handler.handleError(ctx, event.Event{Data: event.ErrorData{Error: "execution result could not be saved"}}))
@@ -84,7 +84,7 @@ func TestCompletionReportsSaveFailure(t *testing.T) {
 func TestToolFailureDoesNotFailExecution(t *testing.T) {
 	ctx := withExecutionOutcome(context.Background())
 	stream := &executionTestStream{}
-	handler := NewAgentStreamHandler(ctx, "session", "message", "request", 1, time.Now(), &types.Message{}, stream, event.NewEventBus(), nil)
+	handler := NewAgentStreamHandler(ctx, "session", "message", "request", 1, time.Now(), &types.Message{}, stream, event.NewEventBus(), nil, nil, nil)
 	require.NoError(t, handler.handleError(ctx, event.Event{Data: event.ErrorData{Error: "timeout", Extra: map[string]interface{}{"tool_call_id": "tool-1"}}}))
 	require.Equal(t, "completed", executionResult(ctx).Status)
 	require.Equal(t, "tool-1", stream.events[0].Data["tool_call_id"])

@@ -25,6 +25,8 @@ func (s *stubMessageServiceForEmbedArtifacts) GetMessage(_ context.Context, _, _
 }
 
 func TestEmbedListMessageArtifactsRequiresSignedSessionAndHidesStorageURL(t *testing.T) {
+	t.Setenv("SYSTEM_SIGNING_KEY", "")
+	t.Setenv("SYSTEM_AES_KEY", "test-embed-signing-key-32-bytes!!!")
 	ch := testEmbedChannel()
 	sess := validEmbedSession(ch)
 	sessionSvc := &stubSessionServiceForEmbed{sessions: map[string]*types.Session{sess.ID: sess}}
@@ -41,6 +43,8 @@ func TestEmbedListMessageArtifactsRequiresSignedSessionAndHidesStorageURL(t *tes
 	sessionHandler := session.NewHandler(
 		sessionSvc, messageSvc, nil, nil, nil, nil, nil, nil, nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil,
 	)
 	embedHandler := &EmbedChannelHandler{sessionService: sessionSvc, sessionHandler: sessionHandler}
 

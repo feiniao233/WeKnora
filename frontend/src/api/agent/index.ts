@@ -38,6 +38,7 @@ export interface CustomAgentConfig {
   agent_type?: AgentType;
   system_prompt?: string;           // 统一系统提示词（使用 {{web_search_status}} 占位符动态控制行为）
   system_prompt_id?: string;        // 引用的 prompt template ID（预设会填入此字段）
+  context_template_id?: string;     // Inherit the referenced context template when text is empty
   context_template?: string;        // 上下文模板（普通模式）
 
   // ===== 模型设置 =====
@@ -46,6 +47,9 @@ export interface CustomAgentConfig {
   temperature?: number;
   max_completion_tokens?: number;   // 0 = 跟随系统默认（快速问答 2048；智能推理 4096，绑沙箱可写文件时 24576）。大于 0 为自定义上限
   thinking?: boolean;                      // 是否启用思考模式（支持扩展思考的模型）
+  // 思考强度：off | auto | minimal | low | medium | high | xhigh | max。
+  // 为空时退回 thinking 布尔值（true == auto，false == off）。
+  reasoning_effort?: string;
   citation_enabled?: boolean;        // 是否在最终回答中输出知识库/网页来源引用（默认开启）
 
   // ===== Agent模式设置 =====
@@ -368,6 +372,7 @@ export interface SuggestedQuestion {
   question: string;
   source: 'faq' | 'document' | 'agent_config' | 'wiki';
   knowledge_base_id?: string;
+  knowledge_id?: string;
 }
 
 // 获取智能体推荐问题

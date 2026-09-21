@@ -109,6 +109,7 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 	}
 
 	var m *migrate.Migrate
+	var sqliteDB *sql.DB
 	if opts.SQLiteDBPath != "" {
 		sqlDB, err := sql.Open("sqlite3", opts.SQLiteDBPath)
 		if err != nil {
@@ -117,6 +118,7 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 			setMigrationState(0, false, wrapped.Error(), false)
 			return wrapped
 		}
+		sqliteDB = sqlDB
 		driver, err := sqlite3migrate.WithInstance(sqlDB, &sqlite3migrate.Config{})
 		if err != nil {
 			sqlDB.Close()
@@ -235,11 +237,15 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 			return captureMigrationFailure(m, fmt.Errorf("failed to run migrations: %w", err))
 		}
 	}
-
 	// Get current version after migration
 	version, dirty, err := m.Version()
 	if err != nil && err != migrate.ErrNilVersion {
 		return captureMigrationFailure(m, fmt.Errorf("failed to get migration version: %w", err))
+	}
+	if sqliteDB != nil && version >= 27 {
+		if err := reconcilePrivateForkSQLiteSchema(sqliteDB); err != nil {
+			return captureMigrationFailure(m, fmt.Errorf("failed to reconcile private-fork sqlite schema: %w", err))
+		}
 	}
 
 	setMigrationState(version, dirty, "", true)
@@ -255,6 +261,77 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 	}
 
 	return nil
+}
+
+// reconcilePrivateForkSQLiteSchema repairs the historical collision where the
+// private fork and upstream both assigned migrations 000013 and 000014. It is
+// deliberately idempotent and runs after every SQLite migration attempt so a
+// clean version marker cannot hide a partially repaired schema.
+func reconcilePrivateForkSQLiteSchema(db *sql.DB) error {
+	for _, column := range []struct {
+		table, name, definition string
+	}{
+		{"mcp_tool_approvals", "enabled", "BOOLEAN NOT NULL DEFAULT 1"},
+		{"knowledge_bases", "category", "TEXT NOT NULL DEFAULT 'general'"},
+		{"messages", "execution_result", "TEXT"},
+	} {
+		exists, err := privateForkSQLiteColumnExists(db, column.table, column.name)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", column.table, column.name, column.definition)); err != nil {
+				return fmt.Errorf("add %s.%s: %w", column.table, column.name, err)
+			}
+		}
+	}
+
+	statements := []string{
+		`CREATE INDEX IF NOT EXISTS idx_knowledge_bases_tenant_category ON knowledge_bases (tenant_id, category)`,
+		`CREATE TABLE IF NOT EXISTS browser_devices (
+ scope_key VARCHAR(32) PRIMARY KEY, id VARCHAR(32) NOT NULL UNIQUE, tenant BIGINT NOT NULL,
+ "user" VARCHAR(36) NOT NULL, label VARCHAR(100) NOT NULL, token_hash VARCHAR(64) NOT NULL UNIQUE,
+ previous_hash VARCHAR(64) NOT NULL DEFAULT '', previous_until DATETIME NOT NULL,
+ expires_at DATETIME NOT NULL, renew_after DATETIME NOT NULL, created_at DATETIME NOT NULL,
+ last_seen_at DATETIME NOT NULL, revoked_at DATETIME, owner VARCHAR(32) NOT NULL DEFAULT '',
+ owner_url VARCHAR(500) NOT NULL DEFAULT '', lease_key VARCHAR(32) NOT NULL DEFAULT '', lease_until DATETIME NOT NULL
+)`,
+		`CREATE TABLE IF NOT EXISTS browser_pairings (
+ scope_key VARCHAR(32) PRIMARY KEY, token_hash VARCHAR(64) NOT NULL UNIQUE,
+ tenant BIGINT NOT NULL, "user" VARCHAR(36) NOT NULL, expires_at DATETIME NOT NULL
+)`,
+		`CREATE INDEX IF NOT EXISTS browser_pairings_expiry ON browser_pairings(expires_at)`,
+		`CREATE TABLE IF NOT EXISTS browser_task_interruptions (
+ scope_key VARCHAR(32) NOT NULL, session VARCHAR(36) NOT NULL, PRIMARY KEY (scope_key, session)
+)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func privateForkSQLiteColumnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // recoverFromDirtyState attempts to recover from a dirty migration state

@@ -21,7 +21,7 @@ func TestPinnedSkillsLoadBeforeModelAndRecordActualContentHash(t *testing.T) {
 	manager.WithTenantSource(skills.NewTenantSkillSource([]*types.TenantSkillEntity{{Name: "diagnosis", Instructions: "Unique skill instructions: verify evidence before answering.", Enabled: true, Status: types.SkillStatusReady}}, nil))
 	require.NoError(t, manager.Initialize(t.Context()))
 	engine.toolRegistry = agenttools.NewToolRegistry()
-	engine.toolRegistry.RegisterTool(agenttools.NewReadSkillTool(manager))
+	engine.toolRegistry.RegisterTool(agenttools.NewReadFileTool(nil).WithSkills(manager, false))
 	var results []event.AgentToolResultData
 	engine.eventBus.On(event.EventAgentToolResult, func(_ context.Context, evt event.Event) error {
 		results = append(results, evt.Data.(event.AgentToolResultData))
@@ -43,7 +43,7 @@ func TestPinnedSkillsLoadBeforeModelAndRecordActualContentHash(t *testing.T) {
 	require.True(t, loaded, "the first model call must contain actual installed skill instructions")
 	call := state.RoundSteps[0].ToolCalls[0]
 	require.True(t, types.IsPipelineToolCallID(call.ID))
-	require.Equal(t, "read_skill", call.Name)
+	require.Equal(t, agenttools.ToolReadFile, call.Name)
 	require.True(t, call.Result.Success)
 	require.NotEmpty(t, call.Result.Data["content_sha256"])
 }

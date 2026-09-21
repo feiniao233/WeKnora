@@ -497,6 +497,7 @@ func validateSkillEntryName(name string) error {
 }
 
 func parseSkillBundleVersion(manifest string) (string, error) {
+	manifest = strings.TrimPrefix(manifest, "\ufeff")
 	lines := strings.Split(manifest, "\n")
 	frontmatterStart := -1
 	for i, line := range lines {

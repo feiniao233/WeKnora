@@ -70,14 +70,14 @@ func TestLangfuseStreamTerminalAndCancellation(t *testing.T) {
 					defer close(ch)
 					defer close(producerDone)
 					if tc.cancel {
-						if sendStreamResponse(ctx, ch, types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "pending"}) {
+						if sendProtocolStreamResponse(ctx, ch, types.StreamResponse{ResponseType: types.ResponseTypeAnswer, Content: "pending"}) {
 							close(firstAccepted)
 						}
 						<-ctx.Done()
 						return
 					}
 					for _, event := range tc.events {
-						if !sendStreamResponse(ctx, ch, event) {
+						if !sendProtocolStreamResponse(ctx, ch, event) {
 							return
 						}
 					}
@@ -135,5 +135,14 @@ func TestLangfuseStreamTerminalAndCancellation(t *testing.T) {
 				require.NotEqual(t, tracepb.Status_STATUS_CODE_ERROR, generation.Status.GetCode())
 			}
 		})
+	}
+}
+
+func sendProtocolStreamResponse(ctx context.Context, ch chan<- types.StreamResponse, response types.StreamResponse) bool {
+	select {
+	case ch <- response:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }

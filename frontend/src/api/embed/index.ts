@@ -48,7 +48,7 @@ export interface EmbedChannelPublicConfig {
   default_locale?: string
 }
 
-export type EmbedLocaleTag = 'zh-CN' | 'en-US' | 'ko-KR' | 'ru-RU' | ''
+export type EmbedLocaleTag = 'zh-CN' | 'en-US' | 'ko-KR' | 'ja-JP' | 'ru-RU' | ''
 
 export interface EmbedChannelStats {
   session_count: number

@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
+	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
 // ---------------------------------------------------------------------------
@@ -44,7 +46,16 @@ func (s *sessionService) resolveKnowledgeBases(
 	} else if customAgent != nil && customAgent.Config.RetrieveKBOnlyWhenMentioned {
 		kbIDs = nil
 		knowledgeIDs = nil
-		logger.Infof(ctx, "RetrieveKBOnlyWhenMentioned is enabled and no @ mention found, KB retrieval disabled for this request")
+		if anchor := s.questionOriginAnchor(ctx, customAgent, req); anchor != "" {
+			// Picking a suggestion generated from a base the agent may read
+			// selects that base, as an @mention would.
+			kbIDs = []string{anchor}
+			logger.Infof(ctx, "RetrieveKBOnlyWhenMentioned: retrieving from the picked suggestion's knowledge base %s",
+				secutils.SanitizeForLog(anchor))
+		} else {
+			logger.Infof(ctx, "RetrieveKBOnlyWhenMentioned is enabled and no @ mention found, "+
+				"KB retrieval disabled for this request")
+		}
 	} else if customAgent != nil {
 		kbIDs = s.resolveKnowledgeBasesFromAgent(ctx, customAgent, req.Session.TenantID)
 	}
@@ -57,6 +68,23 @@ func (s *sessionService) resolveKnowledgeBases(
 		return nil, nil, err
 	}
 	return kbIDs, knowledgeIDs, nil
+}
+
+// questionOriginAnchor returns the knowledge base a picked suggested question
+// came from when the agent is allowed to read it, or "" otherwise. It lets a
+// suggestion work for an agent that retrieves only on @mention, without
+// reaching any base outside the agent's configured scope.
+func (s *sessionService) questionOriginAnchor(
+	ctx context.Context, agent *types.CustomAgent, req *types.QARequest,
+) string {
+	if req.QuestionOrigin == nil || req.Session == nil {
+		return ""
+	}
+	kbID := strings.TrimSpace(req.QuestionOrigin.KnowledgeBaseID)
+	if kbID == "" || !slices.Contains(s.resolveKnowledgeBasesFromAgent(ctx, agent, req.Session.TenantID), kbID) {
+		return ""
+	}
+	return kbID
 }
 
 func (s *sessionService) restrictTagScopesToAgentScope(
@@ -104,6 +132,12 @@ func (s *sessionService) resolveChatModelID(
 	customAgent := req.CustomAgent
 	session := req.Session
 	configuredAgentModelID := ""
+	// A shared agent runs in its owner's workspace, where an override could
+	// pick any of the owner's models rather than the one the agent was
+	// configured with.
+	if req.SharedAgentReadOnly {
+		summaryModelID = ""
+	}
 
 	// An explicit per-turn model is authoritative. Resolve it before the
 	// agent default so a broken default can be recovered without editing the
@@ -181,13 +215,14 @@ func (s *sessionService) applyAgentOverridesToChatManage(
 	// Ensure defaults are set
 	customAgent.EnsureDefaults()
 
-	// Override summary config fields
-	if customAgent.Config.SystemPrompt != "" {
-		cm.SummaryConfig.Prompt = customAgent.Config.SystemPrompt
+	// Resolve inherited templates at request time; saved custom text remains authoritative.
+	systemPrompt, contextTemplate := s.cfg.ResolveCustomAgentPrompts(customAgent)
+	if systemPrompt != "" {
+		cm.SummaryConfig.Prompt = systemPrompt
 		logger.Infof(ctx, "Using custom agent's system_prompt")
 	}
-	if customAgent.Config.ContextTemplate != "" {
-		cm.SummaryConfig.ContextTemplate = customAgent.Config.ContextTemplate
+	if contextTemplate != "" {
+		cm.SummaryConfig.ContextTemplate = contextTemplate
 		logger.Infof(ctx, "Using custom agent's context_template")
 	}
 	if customAgent.Config.Temperature >= 0 {
@@ -202,6 +237,7 @@ func (s *sessionService) applyAgentOverridesToChatManage(
 	// EnsureDefaults pins nil to explicit false so thinking_control wire formats
 	// always receive a value.
 	cm.SummaryConfig.Thinking = customAgent.Config.Thinking
+	cm.SummaryConfig.ReasoningEffort = customAgent.Config.ReasoningEffort
 	cm.CitationEnabled = customAgent.Config.CitationEnabled
 	if customAgent.Config.Thinking != nil {
 		logger.Infof(ctx, "Using custom agent's thinking: %v", *customAgent.Config.Thinking)

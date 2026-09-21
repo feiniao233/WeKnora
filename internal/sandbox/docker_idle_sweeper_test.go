@@ -98,8 +98,8 @@ func TestDockerIdleSweeperBoundsSnapshotActivityByCreationTime(t *testing.T) {
 	require.Equal(t, []string{"from-snapshot"}, engine.removed)
 }
 
-// The marker has to be writable by the unprivileged sandbox account, so a
-// script can backdate or postdate it. Postdating is the dangerous direction: a
+// The marker has to be writable by the account the execs run as, so a script
+// can backdate or postdate it. Postdating is the dangerous direction: a
 // single `touch -d 2099-01-01` would otherwise exempt the container from
 // reclamation forever.
 func TestDockerIdleSweeperRejectsFutureActivityMarker(t *testing.T) {

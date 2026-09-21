@@ -20,7 +20,8 @@ func TestMigrateLegacyStorageBackends(t *testing.T) {
 		default_storage_backend_id TEXT, updated_at DATETIME, deleted_at DATETIME
 	)`).Error)
 	require.NoError(t, db.Exec(`CREATE TABLE knowledge_bases (
-		id TEXT PRIMARY KEY, tenant_id INTEGER, category TEXT NOT NULL DEFAULT 'general', storage_provider_config TEXT,
+		id TEXT PRIMARY KEY, tenant_id INTEGER, category TEXT NOT NULL DEFAULT 'general',
+		profile_config TEXT, generated_profile TEXT, storage_provider_config TEXT,
 		storage_backend_id TEXT, cos_config TEXT, updated_at DATETIME, deleted_at DATETIME
 	)`).Error)
 	require.NoError(t, db.AutoMigrate(&types.StorageBackend{}))

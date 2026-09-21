@@ -22,6 +22,14 @@ func (s *imageDocumentRepo) GetScoped(_ context.Context, tenant uint64, session,
 	}
 	return &types.TemporaryDocument{ID: id, ResourceRef: "resource://" + id, FileType: ".png", Status: types.TemporaryDocumentStatusReady}, nil
 }
+
+func (s *imageDocumentRepo) GetByID(_ context.Context, tenant uint64, id string) (*types.TemporaryDocument, error) {
+	if tenant != 42 {
+		return nil, nil
+	}
+	return &types.TemporaryDocument{ID: id, SessionID: "session", ResourceRef: "resource://" + id, FileType: ".png", Status: types.TemporaryDocumentStatusReady}, nil
+}
+
 func TestDirectVisionPreparesOriginalWithoutParserOrVLM(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2))))

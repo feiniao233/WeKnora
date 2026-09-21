@@ -175,9 +175,9 @@ func (s *dockerIdleSweeper) ttlFor(summary RemoteSandboxSummary) time.Duration {
 // cannot predate this container: a snapshot may carry an older marker until
 // the entrypoint refreshes it, racing the first sweep after creation.
 //
-// The marker lives inside the container and has to be writable by the
-// unprivileged sandbox account, so its mtime is attacker-influenced: a script
-// can `touch -d` it. A timestamp in the future is the one form of that which
+// The marker lives inside the container and has to be writable by the account
+// the execs run as, so its mtime is attacker-influenced: a script can
+// `touch -d` it. A timestamp in the future is the one form of that which
 // would disable reclamation permanently, so it is refused outright and the
 // container falls back to its start time. Backdating can make a sandbox look
 // idle sooner, but never before its own start time.

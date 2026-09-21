@@ -26,14 +26,11 @@ DEFAULT_OPS_MCP_KEY_ENV = "OPS_MCP_API_KEY"
 DEFAULT_KNOWLEDGE_DIR = "/root/code/work/rca-app/docs/knowledge"
 DEFAULT_STATE_FILE = "/root/.local/share/weknora/rca-bootstrap.json"
 DEFAULT_MCP_URL = "https://172.16.20.230/back/rca/mcp"
-DEFAULT_SKILL_DIR = Path(__file__).resolve().parents[1] / "skills/preloaded/rca-diagnosis"
+DEFAULT_SKILL_DIR = Path(__file__).resolve().parents[1] / "skills/catalog/rca-diagnosis"
 
 KB_NAME = "根因分析运维知识库"
-LEGACY_KB_NAME = "RCA 运维知识库"
 MCP_NAME = "Steel Ops MCP (只读)"
 AGENT_NAME = "根因分析助手"
-LEGACY_AGENT_NAME = "RCA 诊断助手"
-LEGACY_EMBED_CHANNEL_NAME = "Steel RCA 助手"
 AGENT_TOOLS = [
     "thinking",
     "todo_write",
@@ -315,9 +312,6 @@ class ApiClient:
             headers={"Content-Type": "application/json"},
         )
 
-    def delete_json(self, path: str) -> Any:
-        return self._request("DELETE", path)
-
     def post_multipart_file(self, path: str, file_path: Path, field_name: str = "file") -> Any:
         boundary = "----weknora-bootstrap-boundary"
         filename = file_path.name
@@ -441,9 +435,6 @@ class RCABootstrapper:
     def _put(self, path: str, payload: Dict[str, Any]) -> Any:
         return self.client.put_json(path, payload)
 
-    def _delete(self, path: str) -> Any:
-        return self.client.delete_json(path)
-
     def _post_file(self, path: str, file_path: Path) -> Any:
         return self.client.post_multipart_file(path, file_path)
 
@@ -463,7 +454,7 @@ class RCABootstrapper:
 
         self._record("knowledge_base", endpoint="/api/v1/knowledge-bases", action="ensure")
         rows = as_list(self._get("/api/v1/knowledge-bases"))
-        found = self._find_by_name(rows, KB_NAME) or self._find_by_name(rows, LEGACY_KB_NAME)
+        found = self._find_by_name(rows, KB_NAME)
         if found:
             kb_id = str(found["id"])
             self._put(
@@ -660,7 +651,7 @@ class RCABootstrapper:
         payload = self._agent_payload(kb_id, mcp_id)
         self._record("agent", endpoint="/api/v1/agents", action="ensure")
         rows = as_list(self._get("/api/v1/agents"))
-        found = self._find_by_name(rows, AGENT_NAME) or self._find_by_name(rows, LEGACY_AGENT_NAME)
+        found = self._find_by_name(rows, AGENT_NAME)
         if found:
             agent_id = str(found["id"])
             self._put(f"/api/v1/agents/{urllib.parse.quote(agent_id, safe='')}", payload)
@@ -673,26 +664,6 @@ class RCABootstrapper:
             self._record("agent", action="created", endpoint="/api/v1/agents", id=agent_id)
         self.state.set_id("agent_id", agent_id)
         return agent_id
-
-    def _retire_legacy_embed_channel(self) -> None:
-        channel_id = str(self.state.get("embed_channel_id", "")).strip()
-        if not channel_id:
-            self.state.discard("embed_publish_token")
-            return
-        path = f"/api/v1/embed-channels/{urllib.parse.quote(channel_id, safe='')}"
-        try:
-            channel = unwrap_api_payload(self._get(path))
-        except ApiError as exc:
-            if exc.status != 404:
-                raise
-            channel = None
-        if isinstance(channel, dict) and channel.get("name") != LEGACY_EMBED_CHANNEL_NAME:
-            raise RuntimeError("Refusing to delete an Embed channel not created by RCA bootstrap")
-        if channel is not None:
-            self._delete(path)
-            self._record("legacy_embed_channel", endpoint=path, action="deleted", id=channel_id)
-        self.state.discard("embed_channel_id")
-        self.state.discard("embed_publish_token")
 
     def run(self) -> Dict[str, Any]:
         if self.config.dry_run:
@@ -714,7 +685,6 @@ class RCABootstrapper:
         mcp_id = self._ensure_mcp()
         catalog_id = self._ensure_skill()
         agent_id = self._ensure_agent(kb_id, mcp_id)
-        self._retire_legacy_embed_channel()
         self.state.set_id("version", STATE_VERSION)
         self.state.set_id("knowledge_base_id", kb_id)
         self.state.set_id("mcp_service_id", mcp_id)

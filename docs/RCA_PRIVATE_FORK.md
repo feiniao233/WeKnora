@@ -13,7 +13,7 @@
 
 设备型号、告警类型和基础数据变化应由 Skill 过程资源、知识库事实材料及 MCP 适配解决，不为单一设备在 Agent 内写固定分支。
 
-Skill 与知识库是两个独立模块。Skill 保存诊断步骤、停止条件和 SOP 引用，RCA 流程位于 `skills/preloaded/rca-diagnosis/references/`；知识库只保存厂家手册、故障案例等可检索事实材料。知识库分类默认支持 `manufacturer_manual`、`fault_case` 和 `general`，也允许符合命名规则的自定义分类。不要把 Skill/SOP 重复上传到知识库。
+Skill 与知识库是两个独立模块。Skill 保存诊断步骤、停止条件和 SOP 引用，RCA 技能包源码位于 `skills/catalog/rca-diagnosis/`；部署时通过标准 Catalog API 注册并安装到 Sandbox，不作为宿主机预置技能加载。知识库只保存厂家手册、故障案例等可检索事实材料。知识库分类默认支持 `manufacturer_manual`、`fault_case` 和 `general`，也允许符合命名规则的自定义分类。不要把 Skill/SOP 重复上传到知识库。
 
 ## 稳定接口
 
@@ -86,7 +86,7 @@ python3 scripts/rca_bootstrap.py \
 
 ## 当前私有差异入口
 
-- RCA Skill 源目录：`skills/preloaded/rca-diagnosis/`（由 bootstrap 打包、注册到 Catalog 并安装）
+- RCA Skill 包源码：`skills/catalog/rca-diagnosis/`（由 bootstrap 打包，并通过标准 Catalog API 安装到 Sandbox）
 - RCA 资源初始化：`scripts/rca_bootstrap.py`
 
 WeKnora 的通用前端和 Embed 实现保留上游源码，但不属于 RCA 生产运行边界，也不创建 RCA Embed Channel。

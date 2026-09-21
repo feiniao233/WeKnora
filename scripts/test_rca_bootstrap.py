@@ -13,9 +13,6 @@ from rca_bootstrap import (  # noqa: E402
     AGENT_TOOLS,
     KB_INDEXING_STRATEGY,
     KB_NAME,
-    LEGACY_AGENT_NAME,
-    LEGACY_EMBED_CHANNEL_NAME,
-    LEGACY_KB_NAME,
     OPS_TOOLS,
     RCAConfig,
     RCABootstrapper,
@@ -30,7 +27,6 @@ class FakeClient:
         self.docs = {}
         self.mcps = []
         self.agents = []
-        self.channels = []
         self.catalogs = []
         self.next_id = 1
 
@@ -58,8 +54,6 @@ class FakeClient:
             return self.response(self.agents)
         if parts == ["api", "v1", "skills", "catalog"]:
             return self.response(self.catalogs)
-        if parts[:3] == ["api", "v1", "embed-channels"]:
-            return self.response(self.find(self.channels, parts[3]))
         raise AssertionError(f"unexpected GET {path}")
 
     def post_json(self, path, payload):
@@ -104,14 +98,6 @@ class FakeClient:
             row.update(payload)
             return self.response(row)
         raise AssertionError(f"unexpected PUT {path}")
-
-    def delete_json(self, path):
-        self.calls.append(("DELETE", path, None))
-        parts = path.strip("/").split("/")
-        if parts[:3] == ["api", "v1", "embed-channels"]:
-            self.channels = [row for row in self.channels if row["id"] != parts[3]]
-            return self.response(None)
-        raise AssertionError(f"unexpected DELETE {path}")
 
     def post_multipart_file(self, path, file_path):
         self.calls.append(("FILE", path, file_path.name))
@@ -160,11 +146,6 @@ class BootstrapTest(unittest.TestCase):
         return result
 
     def test_idempotent_contract(self):
-        self.client.channels.append({"id": "legacy-channel", "name": LEGACY_EMBED_CHANNEL_NAME})
-        self.state_file.write_text(
-            '{"embed_channel_id":"legacy-channel","embed_publish_token":"legacy-token"}',
-            encoding="utf-8",
-        )
         first = self.run_bootstrap()
         second = self.run_bootstrap()
 
@@ -175,10 +156,7 @@ class BootstrapTest(unittest.TestCase):
         self.assertEqual(len(self.client.mcps), 1)
         self.assertEqual(len(self.client.agents), 1)
         self.assertEqual(len(self.client.catalogs), 1)
-        self.assertEqual(self.client.channels, [])
         self.assertEqual(self.state_file.stat().st_mode & 0o777, 0o600)
-        self.assertNotIn("embed_channel_id", self.state_file.read_text(encoding="utf-8"))
-        self.assertNotIn("embed_publish_token", self.state_file.read_text(encoding="utf-8"))
 
         kb_create = next(call for call in self.client.calls if call[:2] == ("POST", "/api/v1/knowledge-bases"))
         self.assertEqual(kb_create[2]["indexing_strategy"], KB_INDEXING_STRATEGY)
@@ -243,33 +221,14 @@ class BootstrapTest(unittest.TestCase):
         upload_path = f"/api/v1/knowledge-bases/{result['resource_ids']['knowledge_base_id']}/knowledge/file"
         self.assertFalse(any(call[:2] == ("FILE", upload_path) for call in self.client.calls))
 
-    def test_renames_legacy_resources_without_creating_duplicates(self):
-        self.client.kbs.append({"id": "kb-legacy", "name": LEGACY_KB_NAME, "category": "general"})
-        self.client.docs["kb-legacy"] = []
-        self.client.agents.append({"id": "agent-legacy", "name": LEGACY_AGENT_NAME})
-
-        self.run_bootstrap()
-
-        self.assertEqual(len(self.client.kbs), 1)
-        self.assertEqual(self.client.kbs[0]["name"], KB_NAME)
-        self.assertEqual(len(self.client.agents), 1)
-        self.assertEqual(self.client.agents[0]["name"], AGENT_NAME)
-
-    def test_does_not_delete_unrelated_embed_channel(self):
-        self.client.channels.append({"id": "legacy-channel", "name": "Other channel"})
-        self.state_file.write_text('{"embed_channel_id":"legacy-channel"}', encoding="utf-8")
-        with self.assertRaisesRegex(RuntimeError, "not created by RCA bootstrap"):
-            self.run_bootstrap()
-        self.assertEqual(len(self.client.channels), 1)
-
     def test_ip_configuration_change_routes_to_conflict_verification(self):
-        skill = (Path(__file__).parents[1] / "skills/preloaded/rca-diagnosis/SKILL.md").read_text(encoding="utf-8")
+        skill = (Path(__file__).parents[1] / "skills/catalog/rca-diagnosis/SKILL.md").read_text(encoding="utf-8")
         self.assertIn("IP 地址配置新增、删除或地址列表变化 -> `ip-conflict`", skill)
         self.assertIn("只表示选择 IP 冲突核验流程，不代表已确认存在地址冲突", skill)
 
     def test_registered_peer_ip_is_ip_conflict_scene_match(self):
         reference = (
-            Path(__file__).parents[1] / "skills/preloaded/rca-diagnosis/references/ip-conflict.md"
+            Path(__file__).parents[1] / "skills/catalog/rca-diagnosis/references/ip-conflict.md"
         ).read_text(encoding="utf-8")
         self.assertIn("配置变更新增地址与另一资产登记地址重复", reference)
         self.assertIn("结论等级为 `场景匹配`", reference)

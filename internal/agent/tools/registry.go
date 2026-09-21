@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 	"unicode/utf8"
 
 	"github.com/Tencent/WeKnora/internal/common"
@@ -23,10 +22,10 @@ type ToolRegistry struct {
 	maxToolOutputSize int // maximum chars for tool output (0 = use DefaultMaxToolOutput)
 }
 
-// DisableTools removes tools from this run's registry. MCP tools are
-// namespaced as mcp_<service>_<tool>, so a logical tool name also matches the
-// suffix after a separator. Removing the tool enforces the policy for both
-// model-visible definitions and execution.
+// DisableTools removes tools from this run's registry. MCP tools are matched by
+// their original protocol name instead of their generated registered name.
+// Removing the tool enforces the policy for both model-visible definitions and
+// execution.
 func (r *ToolRegistry) DisableTools(names []string) []string {
 	if len(names) == 0 {
 		return nil
@@ -38,8 +37,8 @@ func (r *ToolRegistry) DisableTools(names []string) []string {
 	for _, name := range names {
 		r.disabled[name] = true
 	}
-	for registered := range r.tools {
-		if r.isToolDisabled(registered) {
+	for registered, tool := range r.tools {
+		if r.isToolDisabled(tool) {
 			delete(r.tools, registered)
 			delete(r.deferred, registered)
 			disabled = append(disabled, registered)
@@ -49,11 +48,22 @@ func (r *ToolRegistry) DisableTools(names []string) []string {
 	return disabled
 }
 
-func (r *ToolRegistry) isToolDisabled(name string) bool {
-	for disabled := range r.disabled {
-		if name == disabled || strings.HasSuffix(name, "_"+disabled) {
-			return true
-		}
+func (r *ToolRegistry) isToolDisabled(tool types.Tool) bool {
+	if tool == nil || r.disabled == nil {
+		return false
+	}
+	if r.disabled[tool.Name()] {
+		return true
+	}
+	var mcpTool *MCPTool
+	switch tool := tool.(type) {
+	case *MCPRegisteredTool:
+		mcpTool = tool.MCPTool
+	case *MCPTool:
+		mcpTool = tool
+	}
+	if mcpTool != nil && mcpTool.mcpTool != nil {
+		return r.disabled[mcpTool.mcpTool.Name]
 	}
 	return false
 }
@@ -102,7 +112,7 @@ func (r *ToolRegistry) RegisterDeferredTool(tool types.Tool) {
 
 func (r *ToolRegistry) registerTool(tool types.Tool, deferred bool) {
 	name := tool.Name()
-	if r.isToolDisabled(name) {
+	if r.isToolDisabled(tool) {
 		return
 	}
 	if _, exists := r.tools[name]; exists {

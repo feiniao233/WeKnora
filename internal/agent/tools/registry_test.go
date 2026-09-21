@@ -142,25 +142,44 @@ func TestListTools_Sorted(t *testing.T) {
 	}
 }
 
-func TestDisableToolsMatchesExactAndNamespacedMCPNames(t *testing.T) {
+func TestDisableToolsMatchesOriginalMCPToolName(t *testing.T) {
 	registry := NewToolRegistry()
-	registerMany(t, registry, []string{"thinking", "mcp_Steel_Ops_MCP_submit_rca_report", "submit_rca_report_preview"})
+	registerMany(t, registry, []string{"thinking", "submit_rca_report_preview"})
+	mcpTool := NewMCPTool(
+		&types.MCPService{ID: "steel", Name: "Steel Ops MCP"},
+		&types.MCPTool{Name: "submit_rca_report"}, nil, nil, 0,
+	)
+	mcpTool.registeredName = "mcp_Steel_Ops_MCP_submit_0123456789abcdef"
+	registry.RegisterTool(&MCPRegisteredTool{MCPTool: mcpTool})
 
 	disabled := registry.DisableTools([]string{"submit_rca_report"})
 
-	require.Equal(t, []string{"mcp_Steel_Ops_MCP_submit_rca_report"}, disabled)
+	require.Equal(t, []string{"mcp_Steel_Ops_MCP_submit_0123456789abcdef"}, disabled)
 	require.Equal(t, []string{"submit_rca_report_preview", "thinking"}, registry.ListTools())
-	_, err := registry.GetTool("mcp_Steel_Ops_MCP_submit_rca_report")
+	_, err := registry.GetTool("mcp_Steel_Ops_MCP_submit_0123456789abcdef")
 	require.Error(t, err)
 }
 
-func TestDisableToolsRejectsLaterNamespacedRegistration(t *testing.T) {
+func TestDisableToolsRejectsLaterMCPRegistrationByOriginalName(t *testing.T) {
 	registry := NewToolRegistry()
 	registry.DisableTools([]string{"submit_rca_report"})
 
-	registry.RegisterDeferredTool(&mockTool{name: "mcp_ops_submit_rca_report"})
+	mcpTool := NewMCPTool(
+		&types.MCPService{ID: "ops", Name: "Ops"},
+		&types.MCPTool{Name: "submit_rca_report"}, nil, nil, 0,
+	)
+	mcpTool.registeredName = "mcp_Ops_submit_rca_report_0123456789abcdef"
+	registry.RegisterDeferredTool(mcpTool)
 	require.Empty(t, registry.ListTools())
-	require.True(t, registry.isToolDisabled("mcp_ops_submit_rca_report"))
+	require.True(t, registry.isToolDisabled(mcpTool))
+}
+
+func TestDisableToolsDoesNotGuessLogicalNameFromRegisteredSuffix(t *testing.T) {
+	registry := NewToolRegistry()
+	registry.DisableTools([]string{"submit_rca_report"})
+
+	registry.RegisterTool(&mockTool{name: "custom_submit_rca_report"})
+	require.Equal(t, []string{"custom_submit_rca_report"}, registry.ListTools())
 }
 
 // TestRegisterTool_DuplicateRejected guards the first-wins policy that

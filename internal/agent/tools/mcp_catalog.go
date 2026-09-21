@@ -883,7 +883,7 @@ func (t *MCPCallTool) resolve(ctx context.Context, raw json.RawMessage) (*MCPToo
 	}
 	for _, tool := range visible {
 		if mcpToolRef(tool) == ref {
-			if t.registry.isToolDisabled(tool.Name()) {
+			if t.registry.isToolDisabled(tool) {
 				return nil, nil, fmt.Errorf("tool is disabled for this turn")
 			}
 			if err := t.catalog.checkEnabled(ctx, tool); err != nil {

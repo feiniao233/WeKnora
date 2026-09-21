@@ -136,26 +136,15 @@ func (e *AgentEngine) handleMaxIterations(
 		common.PipelineError(ctx, "Agent", "final_answer_failed", map[string]interface{}{
 			"error": err.Error(),
 		})
-		state.FinalAnswer = maxIterationsFallback(state)
+		state.FinalAnswer = "抱歉，暂时无法生成完整分析结果，请稍后重试。"
 	}
 	state.IsComplete = true
-}
-
-func maxIterationsFallback(state *types.AgentState) string {
-	for i := len(state.RoundSteps) - 1; i >= 0; i-- {
-		if report, ok := successfulRCAReport(state.RoundSteps[i].ToolCalls); ok {
-			return report
-		}
-	}
-	return "抱歉，暂时无法生成完整分析结果，请稍后重试。"
 }
 
 func successfulRCAReport(toolCalls []types.ToolCall) (string, bool) {
 	for i := len(toolCalls) - 1; i >= 0; i-- {
 		toolCall := toolCalls[i]
-		name := toolCall.ExecutionName()
-		if toolCall.Result == nil || !toolCall.Result.Success ||
-			(name != "submit_rca_report" && !strings.HasSuffix(name, "__submit_rca_report")) {
+		if toolCall.Result == nil || !toolCall.Result.Success || !isRCAReportSubmission(toolCall) {
 			continue
 		}
 		report, ok := toolCall.ExecutionArgs()["report"].(string)
@@ -168,6 +157,13 @@ func successfulRCAReport(toolCalls []types.ToolCall) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func isRCAReportSubmission(toolCall types.ToolCall) bool {
+	if toolCall.Target != nil {
+		return toolCall.Target.ToolName == "submit_rca_report"
+	}
+	return toolCall.Name == "submit_rca_report"
 }
 
 func (e *AgentEngine) completeWithSubmittedRCAReport(

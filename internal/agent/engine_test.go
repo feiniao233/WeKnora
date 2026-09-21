@@ -1075,7 +1075,7 @@ func TestExecuteLoop_SubmittedRCAReportTerminatesWithoutRegeneration(t *testing.
 		ToolCalls: []types.LLMToolCall{{
 			ID: "submit-1",
 			Function: types.FunctionCall{
-				Name:      "ops__submit_rca_report",
+				Name:      "submit_rca_report",
 				Arguments: `{"report":` + string(mustJSON(t, report)) + `}`,
 			},
 		}},
@@ -1084,7 +1084,7 @@ func TestExecuteLoop_SubmittedRCAReportTerminatesWithoutRegeneration(t *testing.
 	}}}}}
 	engine := newTestEngine(t, model)
 	engine.toolRegistry = agenttools.NewToolRegistry()
-	tool := newCountingTool("ops__submit_rca_report")
+	tool := newCountingTool("submit_rca_report")
 	engine.toolRegistry.RegisterTool(tool)
 
 	var answer strings.Builder

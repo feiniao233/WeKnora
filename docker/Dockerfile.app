@@ -1,5 +1,5 @@
 # Build extension and daemon from the same pinned source on the runtime architecture.
-FROM --platform=$TARGETPLATFORM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS browserskill
+FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS browserskill
 WORKDIR /build
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git python3 ca-certificates curl build-essential cmake pkg-config && \
@@ -13,8 +13,9 @@ ARG TARGETOS
 ARG TARGETARCH
 RUN bash scripts/build_browserskill.sh /opt/weknora/browserskill "${TARGETOS}/${TARGETARCH}"
 
-# Build stage
-FROM golang:1.26-bookworm AS builder
+# Shared build base. Keep the anydoc stage independent from application source
+# and release metadata so ordinary Go changes do not invalidate the Rust build.
+FROM golang:1.26-bookworm AS build-base
 
 WORKDIR /app
 
@@ -36,6 +37,30 @@ RUN if [ -n "$APK_MIRROR_ARG" ]; then \
     apt-get update && \
     apt-get install -y git build-essential libsqlite3-dev curl
 
+# Build the optional in-process document parser from its own narrow context.
+# The archive is rebuilt only when these inputs or WITH_ANYDOC change.
+FROM build-base AS anydoc-builder
+
+ARG WITH_ANYDOC=1
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
+ENV PATH=/usr/local/cargo/bin:$PATH
+RUN if [ "$WITH_ANYDOC" = "1" ]; then \
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain stable; \
+    fi
+COPY scripts/build-anydoc-lib.sh scripts/build-anydoc-lib.sh
+COPY third_party/anydoc-go third_party/anydoc-go
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/app/third_party/anydoc-go/target,sharing=locked \
+    mkdir -p third_party/anydoc-go/lib && \
+    if [ "$WITH_ANYDOC" = "1" ]; then \
+        ./scripts/build-anydoc-lib.sh; \
+    fi
+
+# Build stage
+FROM build-base AS builder
+
 # Install migrate tool
 RUN go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 
@@ -47,6 +72,7 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY cmd/download cmd/download
 RUN go run cmd/download/duckdb/duckdb.go
 COPY . .
+COPY --from=anydoc-builder /app/third_party/anydoc-go/lib /app/third_party/anydoc-go/lib
 RUN --mount=type=cache,target=/go/pkg/mod bash ./scripts/copy-licenses.sh /license-bundle
 
 # Get version and commit info for build injection
@@ -61,23 +87,14 @@ ENV COMMIT_ID=${COMMIT_ID_ARG}
 ENV BUILD_TIME=${BUILD_TIME_ARG}
 ENV GO_VERSION=${GO_VERSION_ARG}
 
-# Link the anydoc parser engine (office docs converted in-process, no
-# Python docreader). Default on so Hub / compose images ship a working
-# engine; pass WITH_ANYDOC=0 to skip the Rust toolchain (~few minutes and
-# ~1 GB of build-stage layers).
+# Link the anydoc parser engine (office docs converted in-process, no Python
+# docreader). Default on so Hub / compose images ship a working engine; pass
+# WITH_ANYDOC=0 to omit the archive and build without the anydoc tag.
 ARG WITH_ANYDOC=1
-ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
-ENV PATH=/usr/local/cargo/bin:$PATH
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    if [ "$WITH_ANYDOC" = "1" ]; then \
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain stable && \
-        ./scripts/build-anydoc-lib.sh; \
-    fi
 
 # Build the application with version info
 RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
     if [ "$WITH_ANYDOC" = "1" ]; then \
         make build-prod GO_BUILD_TAGS=anydoc; \
     else \

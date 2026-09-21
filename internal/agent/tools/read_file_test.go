@@ -113,6 +113,25 @@ func TestReadFileSkillPagesPreserveEveryLineAndSuppressBinary(t *testing.T) {
 	require.Equal(t, 0, result.Data["returned_bytes"])
 }
 
+func TestReadFileSkillAcceptsOneBasedInitialLineOffset(t *testing.T) {
+	mgr, _ := readFileSkills(t)
+	reader := NewReadFileTool(nil).WithSkills(mgr, false)
+
+	result, err := reader.Execute(t.Context(), json.RawMessage(
+		`{"path":"skill://allowed/SKILL.md","offset":1,"line_offset":1}`,
+	))
+	require.NoError(t, err)
+	require.True(t, result.Success, result.Error)
+	require.Contains(t, result.Output, "Use the bundled guide")
+
+	result, err = reader.Execute(t.Context(), json.RawMessage(
+		`{"path":"skill://allowed/SKILL.md","offset":1,"line_offset":2}`,
+	))
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Equal(t, "line_offset is supported only for saved web:// pages", result.Error)
+}
+
 func TestReadFileInstalledSkillSelectsShellAndDisabledSkillsStayHidden(t *testing.T) {
 	mgr := shellTestSkillEnvironment(t)
 	reader := NewReadFileTool(nil).WithSkills(mgr, true)

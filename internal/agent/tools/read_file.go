@@ -25,8 +25,8 @@ type ReadFileTool struct {
 }
 
 type ReadFileInput struct {
-	Path       string `json:"path" jsonschema:"Path inside the current session sandbox (relative to /workspace), skill:// resource, or saved web:// page"` //nolint:lll // JSON schema tags must remain on one line.
-	LineOffset int    `json:"line_offset,omitempty" jsonschema:"Web only: character offset within a long line"`
+	Path       string `json:"path" jsonschema:"Path inside the current session sandbox (relative to /workspace), skill:// resource, or saved web:// page"`                //nolint:lll // JSON schema tags must remain on one line.
+	LineOffset int    `json:"line_offset,omitempty" jsonschema:"web:// only: zero-based character cursor returned as next_line_offset; omit for sandbox and skill files"` //nolint:lll // JSON schema tags must remain on one line.
 	Offset     int    `json:"offset,omitempty" jsonschema:"1-based line number; continue at next_offset"`
 	Limit      int    `json:"limit,omitempty" jsonschema:"Maximum lines to return; defaults to 2000."`
 	MaxBytes   int64  `json:"max_bytes,omitempty" jsonschema:"Text byte budget; at most 65536 (web: 51200)"`
@@ -91,7 +91,12 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (*type
 		}
 		return t.readWebPage(ctx, input), nil
 	}
-	if input.LineOffset != 0 {
+	// Some models copy the 1-based line convention from offset into every
+	// offset-like field on an initial read. For non-web sources, accept that
+	// harmless start cursor instead of spending an Agent round on a retry.
+	if input.LineOffset == 1 {
+		input.LineOffset = 0
+	} else if input.LineOffset != 0 {
 		return &types.ToolResult{Success: false, Error: "line_offset is supported only for saved web:// pages"}, nil
 	}
 	if strings.HasPrefix(input.Path, "skill://") {

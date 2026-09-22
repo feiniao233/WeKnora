@@ -57,19 +57,21 @@ func (s *transcriptStreams) DeleteSteerEvent(
 	return false, nil
 }
 
-func (s *transcriptStreams) SetLiveRun(context.Context, string, string, string) error {
+func (s *transcriptStreams) ClaimExecution(context.Context, string, string, string) error {
 	return nil
 }
 
-func (s *transcriptStreams) ClaimLiveRun(context.Context, string, string, string) error {
+func (s *transcriptStreams) RenewExecution(context.Context, string, string, string) error { return nil }
+
+func (s *transcriptStreams) ReplaceExecution(context.Context, string, string, string, string, string) error {
 	return nil
 }
 
-func (s *transcriptStreams) GetLiveRun(context.Context, string) (string, string, error) {
+func (s *transcriptStreams) PeekExecution(context.Context, string) (string, string, error) {
 	return "", "", nil
 }
 
-func (s *transcriptStreams) ClearLiveRun(context.Context, string, string) error {
+func (s *transcriptStreams) ReleaseExecution(context.Context, string, string, string) error {
 	return nil
 }
 

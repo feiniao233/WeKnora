@@ -425,6 +425,8 @@ type Message struct {
 	ExecutionContext MessageExecutionContext `json:"-" gorm:"type:jsonb;column:execution_context"`
 	// ExecutionProvenance is populated only for history responses from the saved snapshot.
 	ExecutionProvenance *MessageExecutionProvenance `json:"execution_provenance,omitempty" gorm:"-"`
+	// ActionID is the public projection of saved action metadata for history consumers.
+	ActionID string `json:"action_id,omitempty" gorm:"-"`
 	// KnowledgeID links this message to a Knowledge entry in the chat history knowledge base
 	// Used for vector search indexing: when set, the message content has been indexed as a Knowledge passage
 	KnowledgeID string `json:"knowledge_id,omitempty" gorm:"type:varchar(36);index"`
@@ -456,6 +458,7 @@ type Message struct {
 // rendered prompt, model weights, Skill contents, or proof that a Skill ran.
 // Agent/model bindings remain in Message.AgentID and Message.ModelID.
 type MessageExecutionProvenance struct {
+	ActionID            string   `json:"action_id,omitempty"`
 	ExecutionConfigHash string   `json:"execution_config_hash"`
 	SkillsSelectionMode string   `json:"skills_selection_mode,omitempty"`
 	SelectedSkillNames  []string `json:"selected_skill_names,omitempty"`
@@ -465,6 +468,12 @@ type MessageExecutionProvenance struct {
 // MessageExecutionContext is a message-level snapshot of the non-secret
 // request state used by derived experiences such as follow-up suggestions.
 type MessageExecutionContext struct {
+	// ActionID is descriptive UI metadata, never an authorization input.
+	ActionID      string `json:"action_id,omitempty"`
+	ExecutionMode string `json:"execution_mode,omitempty"`
+	// ResolvedMCPServiceIDs is the actual allowed service scope, distinct from mentions.
+	ResolvedMCPServiceIDs []string `json:"resolved_mcp_service_ids,omitempty"`
+	MCPSelectionMode      string   `json:"mcp_selection_mode,omitempty"`
 	// ExecutionConfigHash is sha256-v1 of the resolved agent configuration and
 	// per-request overrides/scope; distinct from the suggestion-cache hash below.
 	ExecutionConfigHash   string                    `json:"execution_config_hash,omitempty"`

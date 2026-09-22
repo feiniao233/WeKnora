@@ -16,6 +16,7 @@ func TestLoadMessagesExecutionProvenancePrivateSnapshot(t *testing.T) {
 	t.Setenv("RESOURCE_URL_MODE", "handle")
 	message := &types.Message{Role: "assistant", AgentID: "agent", ModelID: "model", AgentTenantID: 987,
 		RenderedContent: "private-rendered-prompt", ExecutionContext: types.MessageExecutionContext{
+			ActionID:            "generate_rca_report",
 			ExecutionConfigHash: "sha256-v1:historical-config", SkillsSelectionMode: "selected",
 			SelectedSkillNames: []string{"rca-diagnosis"}, SkillNames: []string{"requested-skill"},
 			KnowledgeBaseIDs: []string{"private-knowledge-scope"}, MCPServiceIDs: []string{"private-mcp-scope"},
@@ -40,7 +41,9 @@ func TestLoadMessagesExecutionProvenancePrivateSnapshot(t *testing.T) {
 		item := body.Data[0]
 		require.Equal(t, "agent", item["agent_id"])
 		require.Equal(t, "model", item["model_id"])
+		require.Equal(t, "generate_rca_report", item["action_id"])
 		require.Equal(t, map[string]interface{}{
+			"action_id":             "generate_rca_report",
 			"execution_config_hash": "sha256-v1:historical-config", "skills_selection_mode": "selected",
 			"selected_skill_names": []interface{}{"rca-diagnosis"}, "requested_skill_names": []interface{}{"requested-skill"},
 		}, item["execution_provenance"])

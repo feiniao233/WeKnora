@@ -27,10 +27,12 @@ type Handler struct {
 	config               *config.Config                  // Application configuration
 	knowledgebaseService interfaces.KnowledgeBaseService // Service for managing knowledge bases
 	customAgentService   interfaces.CustomAgentService   // Service for managing custom agents
-	tenantService        interfaces.TenantService        // Service for loading tenant (shared agent context)
-	agentShareService    interfaces.AgentShareService    // Service for resolving shared agents (KB scope in retrieval)
-	kbShareService       interfaces.KBShareService       // Service for resolving shared KB permissions
-	fileService          interfaces.FileService          // Service for file storage (image uploads)
+	mcpService           interfaces.MCPServiceService
+	tenantSkills         *service.TenantSkillService
+	tenantService        interfaces.TenantService     // Service for loading tenant (shared agent context)
+	agentShareService    interfaces.AgentShareService // Service for resolving shared agents (KB scope in retrieval)
+	kbShareService       interfaces.KBShareService    // Service for resolving shared KB permissions
+	fileService          interfaces.FileService       // Service for file storage (image uploads)
 	resourceCatalog      interfaces.ResourceCatalog
 	storageResolver      interfaces.StorageBackendResolver
 	modelService         interfaces.ModelService // Service for model management (VLM access)
@@ -103,8 +105,12 @@ func NewHandler(
 	rdb *redis.Client,
 	forkService *service.SessionForkService,
 	rewindService *service.SessionRewindService,
+	mcpService interfaces.MCPServiceService,
+	tenantSkills *service.TenantSkillService,
 ) *Handler {
 	h := &Handler{
+		mcpService:            mcpService,
+		tenantSkills:          tenantSkills,
 		browserSkill:          browserSkill,
 		sessionService:        sessionService,
 		messageService:        messageService,
@@ -188,7 +194,15 @@ func (h *Handler) CreateSession(c *gin.Context) {
 	)
 
 	// Create session object with base properties
+	if request.AgentID != "" {
+		resolved, _, _ := h.resolveAgent(ctx, c, request.AgentID, 0)
+		if resolved == nil {
+			c.Error(errors.NewNotFoundError("Agent not found"))
+			return
+		}
+	}
 	createdSession := &types.Session{
+		AgentID:     request.AgentID,
 		TenantID:    tenantID.(uint64),
 		Title:       request.Title,
 		Description: types.SanitizeClientSessionDescription(request.Description, ""),
@@ -361,6 +375,10 @@ func (h *Handler) UpdateSession(c *gin.Context) {
 
 	// Call service to update session
 	if err := h.sessionService.UpdateSession(ctx, &session); err != nil {
+		if appErr, ok := stderrors.AsType[*errors.AppError](err); ok {
+			c.Error(appErr)
+			return
+		}
 		if stderrors.Is(err, errors.ErrSessionNotFound) {
 			logger.Warnf(ctx, "Session not found, ID: %s", id)
 			c.Error(errors.NewNotFoundError(err.Error()))

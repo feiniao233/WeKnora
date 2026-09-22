@@ -431,6 +431,10 @@ func (s *sessionService) UpdateSession(ctx context.Context, session *types.Sessi
 		return err
 	}
 	if existing != nil {
+		if session.AgentID != "" && session.AgentID != existing.AgentID {
+			return apperrors.NewBadRequestError("Session agent binding is immutable")
+		}
+		session.AgentID = existing.AgentID
 		session.Description = types.SanitizeClientSessionDescription(
 			session.Description, existing.Description)
 	}

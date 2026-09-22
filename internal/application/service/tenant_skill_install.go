@@ -1052,7 +1052,7 @@ func (s *TenantSkillService) openInstallerRun(
 func (r *installerRun) round(ctx context.Context, prompt string) error {
 	if r.steer != nil {
 		if err := r.steer.service.withInstallSteerLock(ctx, r.sessionID, func(ctx context.Context) error {
-			return r.steer.service.streams.SetLiveRun(
+			return r.steer.service.streams.ClaimExecution(
 				ctx, installSteerSession(r.sessionID), r.transcript.assistantMessageID, "",
 			)
 		}); err != nil {
@@ -1062,8 +1062,8 @@ func (r *installerRun) round(ctx context.Context, prompt string) error {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), installCleanupTimeout)
 			defer cancel()
 			_ = r.steer.service.withInstallSteerLock(cleanup, r.sessionID, func(ctx context.Context) error {
-				return r.steer.service.streams.ClearLiveRun(
-					ctx, installSteerSession(r.sessionID), r.transcript.assistantMessageID,
+				return r.steer.service.streams.ReleaseExecution(
+					ctx, installSteerSession(r.sessionID), r.transcript.assistantMessageID, "",
 				)
 			})
 		}()

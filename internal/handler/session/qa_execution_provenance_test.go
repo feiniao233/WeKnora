@@ -23,8 +23,9 @@ func TestExecutionProvenanceCapturesConfigWithoutChangingSuggestionCache(t *test
 		return snapshot
 	}
 	original := capture()
+	original.ActionID = "generate_rca_report"
 	require.Regexp(t, `^sha256-v1:[a-f0-9]{64}$`, original.ExecutionConfigHash)
-	require.Equal(t, original.ExecutionConfigHash, capture().ExecutionConfigHash)
+	require.Equal(t, original.ExecutionConfigHash, capture().ExecutionConfigHash, "action metadata does not alter execution authorization or config hash")
 	override, _, _, model := buildMessageExecutionContext(context.Background(), agent, 1, "override-model", nil, nil, nil, nil, nil, requested, []string{"submit_rca_report"}, false)
 	require.Equal(t, "override-model", model)
 	require.NotEqual(t, original.ExecutionConfigHash, override.ExecutionConfigHash)

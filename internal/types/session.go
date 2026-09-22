@@ -76,6 +76,8 @@ type ContextConfig struct {
 
 // Session represents the session
 type Session struct {
+	// AgentID is an immutable binding established when the session is created.
+	AgentID string `json:"agent_id,omitempty" gorm:"type:varchar(36)"`
 	// ID
 	ID string `json:"id"          gorm:"type:varchar(36);primaryKey"`
 	// Title

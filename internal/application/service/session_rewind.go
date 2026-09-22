@@ -140,7 +140,7 @@ type rewindArtifactJanitor interface {
 }
 
 type rewindLiveRunReader interface {
-	GetLiveRun(ctx context.Context, sessionID string) (assistantMessageID, requestID string, err error)
+	PeekExecution(ctx context.Context, sessionID string) (assistantMessageID, requestID string, err error)
 }
 
 type rewindStreamDropper interface {
@@ -468,7 +468,7 @@ func (s *SessionRewindService) lockRewind(ctx context.Context, sessionID string)
 
 func (s *SessionRewindService) rejectIfBusy(ctx context.Context, sessionID string) error {
 	if s.liveRuns != nil {
-		liveID, _, err := s.liveRuns.GetLiveRun(ctx, sessionID)
+		liveID, _, err := s.liveRuns.PeekExecution(ctx, sessionID)
 		if err != nil {
 			return fmt.Errorf("session rewind: check live run: %w", err)
 		}

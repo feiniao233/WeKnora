@@ -41,7 +41,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"knowledges":         {"pending_subtasks_count", "profile"},                                                    // 000056, 000101
 	"knowledge_bases":    {"category", "profile_config", "generated_profile"},                                      // private/000101
 	"messages":           {"attachments", "usage", "execution_result", "sandbox_checkpoint", "context_checkpoint"}, // private/000034/085/097/105
-	"sessions":           {"parent_session_id", "forked_from_message_id", "fork_bootstrap"},                        // 000097
+	"sessions":           {"parent_session_id", "forked_from_message_id", "fork_bootstrap", "agent_id"},            // 000006/097
 	"tenant_invitations": {"token", "accepted_count"},                                                              // 000054
 	"embed_channels":     {"allow_memory"},                                                                         // 000060
 	"mcp_oauth_tokens":   {"principal_type", "principal_id"},                                                       // 000064

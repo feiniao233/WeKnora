@@ -8,6 +8,7 @@ import (
 // Sessions are now knowledge-base-independent and serve as conversation containers.
 // All configuration (knowledge bases, model settings, etc.) comes from custom agent at query time.
 type CreateSessionRequest struct {
+	AgentID string `json:"agent_id"`
 	// Title for the session (optional)
 	Title string `json:"title"`
 	// Description for the session (optional)
@@ -42,6 +43,8 @@ type ImageAttachment struct {
 
 // CreateKnowledgeQARequest defines the request structure for knowledge QA
 type CreateKnowledgeQARequest struct {
+	ActionID              string                       `json:"action_id"`
+	SourceMessageID       string                       `json:"source_message_id"`
 	Query                 string                       `json:"query"              binding:"required"` // Query text for knowledge base search
 	KnowledgeBaseIDs      []string                     `json:"knowledge_base_ids"`                    // Selected knowledge base ID for this request
 	KnowledgeIds          []string                     `json:"knowledge_ids"`                         // Selected knowledge ID for this request

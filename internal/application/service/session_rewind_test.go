@@ -89,7 +89,7 @@ type fakeLiveRunReader struct {
 	assistantID string
 }
 
-func (f *fakeLiveRunReader) GetLiveRun(context.Context, string) (string, string, error) {
+func (f *fakeLiveRunReader) PeekExecution(context.Context, string) (string, string, error) {
 	if f == nil {
 		return "", "", nil
 	}

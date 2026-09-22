@@ -24,7 +24,7 @@ func newGuidanceFixture(t *testing.T) (*installFixture, *installSteerSink) {
 	require.NoError(t, fx.skillRepo.UpdateSkill(context.Background(), row))
 	tr := newInstallTranscript(context.Background(), nil, fx.svc.streams, fx.svc.messages, "sess-1", "msg-1", nil)
 	sink := &installSteerSink{service: fx.svc, transcript: tr}
-	require.NoError(t, fx.svc.streams.SetLiveRun(context.Background(), installSteerSession("sess-1"), "msg-1", ""))
+	require.NoError(t, fx.svc.streams.ClaimExecution(context.Background(), installSteerSession("sess-1"), "msg-1", ""))
 	return fx, sink
 }
 
@@ -61,7 +61,7 @@ func TestInstallGuidanceScopesAndDeduplicates(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, state.Accepting)
 	require.Equal(t, "injected", state.Messages[0].Status)
-	live, _, err := fx.svc.streams.GetLiveRun(ctx, "sess-1")
+	live, _, err := fx.svc.streams.PeekExecution(ctx, "sess-1")
 	require.NoError(t, err)
 	require.Empty(t, live, "ordinary chat routes must never expose the maintenance run")
 }
@@ -150,7 +150,7 @@ func TestInstallGuidanceCloseAndSendAcrossReplicas(t *testing.T) {
 	other := &TenantSkillService{skills: fx.skillRepo, streams: mgr, redis: client}
 	ctx := context.Background()
 	for i := 0; i < 20; i++ {
-		require.NoError(t, mgr.SetLiveRun(ctx, installSteerSession("sess-1"), "msg-1", ""))
+		require.NoError(t, mgr.ClaimExecution(ctx, installSteerSession("sess-1"), "msg-1", ""))
 		id := uuid.NewString()
 		var sendErr, closeErr error
 		var closed bool

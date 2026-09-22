@@ -22,7 +22,8 @@ func (h *Handler) UploadTemporaryDocument(c *gin.Context) {
 	sessionID := c.Param("session_id")
 	// Uploading attaches content to the session, so use the strict owner scope:
 	// a tenant admin may read an API-key session but must not add attachments.
-	if _, err := h.sessionService.GetOwnedSession(ctx, sessionID); err != nil {
+	boundSession, err := h.sessionService.GetOwnedSession(ctx, sessionID)
+	if err != nil {
 		c.Error(apperrors.NewNotFoundError("Session not found"))
 		return
 	}
@@ -45,7 +46,23 @@ func (h *Handler) UploadTemporaryDocument(c *gin.Context) {
 		c.Error(apperrors.NewBadRequestError(parseErr.Error()))
 		return
 	}
-	agent, resourceTenantID, _ := h.resolveAgent(ctx, c, c.PostForm("agent_id"), sourceTenantID)
+	agentID := c.PostForm("agent_id")
+	if boundSession.AgentID != "" {
+		if sourceTenantID != 0 {
+			c.Error(apperrors.NewBadRequestError("Bound sessions do not accept an agent source override"))
+			return
+		}
+		if agentID != "" && agentID != boundSession.AgentID {
+			c.Error(apperrors.NewBadRequestError("Session agent binding is immutable"))
+			return
+		}
+		agentID = boundSession.AgentID
+	}
+	agent, resourceTenantID, _ := h.resolveAgent(ctx, c, agentID, sourceTenantID)
+	if boundSession.AgentID != "" && agent == nil {
+		c.Error(apperrors.NewNotFoundError("Bound agent not found"))
+		return
+	}
 	if sourceTenantID != 0 && agent == nil {
 		c.Error(apperrors.NewNotFoundError("Shared agent not found"))
 		return

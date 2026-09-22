@@ -1006,19 +1006,23 @@ func (m *transcriptStreamManager) DeleteSteerEvent(
 	return false, nil
 }
 
-func (m *transcriptStreamManager) SetLiveRun(context.Context, string, string, string) error {
+func (m *transcriptStreamManager) ClaimExecution(context.Context, string, string, string) error {
 	return nil
 }
 
-func (m *transcriptStreamManager) ClaimLiveRun(context.Context, string, string, string) error {
+func (m *transcriptStreamManager) RenewExecution(context.Context, string, string, string) error {
 	return nil
 }
 
-func (m *transcriptStreamManager) GetLiveRun(context.Context, string) (string, string, error) {
+func (m *transcriptStreamManager) ReplaceExecution(context.Context, string, string, string, string, string) error {
+	return nil
+}
+
+func (m *transcriptStreamManager) PeekExecution(context.Context, string) (string, string, error) {
 	return "", "", nil
 }
 
-func (m *transcriptStreamManager) ClearLiveRun(context.Context, string, string) error {
+func (m *transcriptStreamManager) ReleaseExecution(context.Context, string, string, string) error {
 	return nil
 }
 

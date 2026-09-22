@@ -240,6 +240,7 @@ func (s *SessionForkService) Fork(
 	}
 
 	newSession := &types.Session{
+		AgentID:             source.AgentID,
 		ID:                  uuid.New().String(),
 		TenantID:            source.TenantID,
 		UserID:              source.UserID,

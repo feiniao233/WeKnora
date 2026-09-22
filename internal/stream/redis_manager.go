@@ -12,8 +12,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// ErrLiveRunExists is returned by SetLiveRun when another assistant already
-// holds the session. Follow-up handoff uses ClaimLiveRun to overwrite.
+// ErrLiveRunExists is returned by ClaimExecution when another assistant already
+// holds the session. Follow-up handoff uses ReplaceExecution to overwrite.
 var ErrLiveRunExists = errors.New("session already has a live run")
 
 // RedisStreamManager implements StreamManager using Redis Lists for append-only event streaming
@@ -96,7 +96,7 @@ func (r *RedisStreamManager) AppendEvent(
 	if err := r.client.Expire(ctx, key, r.ttl).Err(); err != nil {
 		return fmt.Errorf("failed to set TTL: %w", err)
 	}
-	r.touchLiveRun(ctx, sessionID)
+	r.touchLiveRun(ctx, sessionID, messageID)
 
 	return nil
 }
@@ -123,9 +123,9 @@ func (r *RedisStreamManager) GetEvents(
 
 	// No new events. Still refresh the live-run marker: the SSE poll loop
 	// hits this path while the model is thinking, which is exactly when a
-	// long turn would otherwise outlive the one-shot SetLiveRun TTL.
+	// long turn would otherwise outlive the one-shot ClaimExecution TTL.
 	if len(results) == 0 {
-		r.touchLiveRun(ctx, sessionID)
+		r.touchLiveRun(ctx, sessionID, messageID)
 		return []interfaces.StreamEvent{}, fromOffset, nil
 	}
 
@@ -142,7 +142,7 @@ func (r *RedisStreamManager) GetEvents(
 
 	// Calculate next offset
 	nextOffset := fromOffset + len(results)
-	r.touchLiveRun(ctx, sessionID)
+	r.touchLiveRun(ctx, sessionID, messageID)
 
 	return events, nextOffset, nil
 }
@@ -176,7 +176,7 @@ func (r *RedisStreamManager) AppendSteerEvents(
 	if err := steerAppendUnique.Run(ctx, r.client, []string{key}, args...).Err(); err != nil {
 		return fmt.Errorf("failed to append steer events to Redis: %w", err)
 	}
-	_ = r.client.Expire(ctx, r.buildLiveRunKey(sessionID), r.ttl).Err()
+	r.touchLiveRun(ctx, sessionID, messageID)
 	return nil
 }
 
@@ -213,7 +213,7 @@ func (r *RedisStreamManager) GetSteerEvents(
 		return nil, fromOffset, fmt.Errorf("failed to get steer events from Redis: %w", err)
 	}
 	if len(results) == 0 {
-		r.touchLiveRun(ctx, sessionID)
+		r.touchLiveRun(ctx, sessionID, messageID)
 		return []interfaces.StreamEvent{}, fromOffset, nil
 	}
 
@@ -226,7 +226,7 @@ func (r *RedisStreamManager) GetSteerEvents(
 		events = append(events, event)
 	}
 
-	r.touchLiveRun(ctx, sessionID)
+	r.touchLiveRun(ctx, sessionID, messageID)
 	return events, fromOffset + len(results), nil
 }
 
@@ -377,10 +377,10 @@ func (r *RedisStreamManager) marshalLiveRun(assistantMessageID, requestID string
 	return payload, nil
 }
 
-// SetLiveRun records the session's currently generating assistant message so
+// ClaimExecution records the session's currently generating assistant message so
 // every replica routes steer requests to the same run. It refuses to
-// replace a different live assistant; ClaimLiveRun is the overwrite path.
-func (r *RedisStreamManager) SetLiveRun(
+// replace a different live assistant; ReplaceExecution is the overwrite path.
+func (r *RedisStreamManager) ClaimExecution(
 	ctx context.Context,
 	sessionID, assistantMessageID, requestID string,
 ) error {
@@ -388,49 +388,48 @@ func (r *RedisStreamManager) SetLiveRun(
 	if err != nil {
 		return err
 	}
-	ok, err := r.client.SetNX(ctx, r.buildLiveRunKey(sessionID), payload, r.ttl).Result()
+	ok, err := claimExecutionCAS.Run(ctx, r.client, []string{r.buildLiveRunKey(sessionID)}, assistantMessageID, requestID, string(payload), r.ttl.Milliseconds()).Int()
 	if err != nil {
 		return fmt.Errorf("failed to set live run marker in Redis: %w", err)
 	}
-	if ok {
+	if ok == 1 {
 		return nil
-	}
-	current, _, err := r.GetLiveRun(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-	if current == assistantMessageID {
-		return nil
-	}
-	if current == "" {
-		ok, err = r.client.SetNX(ctx, r.buildLiveRunKey(sessionID), payload, r.ttl).Result()
-		if err != nil {
-			return fmt.Errorf("failed to set live run marker in Redis: %w", err)
-		}
-		if ok {
-			return nil
-		}
 	}
 	return ErrLiveRunExists
 }
 
-// ClaimLiveRun overwrites the live-run marker for follow-up handoff.
-func (r *RedisStreamManager) ClaimLiveRun(
+var claimExecutionCAS = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if raw then
+  local marker = cjson.decode(raw)
+  if marker.assistant_message_id == ARGV[1] and marker.request_id == ARGV[2] then return 1 end
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[3], 'PX', ARGV[4])
+return 1
+`)
+
+// ReplaceExecution overwrites the live-run marker for follow-up handoff.
+func (r *RedisStreamManager) ReplaceExecution(
 	ctx context.Context,
-	sessionID, assistantMessageID, requestID string,
+	sessionID, oldMessageID, oldRequestID, assistantMessageID, requestID string,
 ) error {
 	payload, err := r.marshalLiveRun(assistantMessageID, requestID)
 	if err != nil {
 		return err
 	}
-	if err := r.client.Set(ctx, r.buildLiveRunKey(sessionID), payload, r.ttl).Err(); err != nil {
+	updated, err := replaceExecutionCAS.Run(ctx, r.client, []string{r.buildLiveRunKey(sessionID)}, oldMessageID, oldRequestID, string(payload), r.ttl.Milliseconds()).Int()
+	if err != nil {
 		return fmt.Errorf("failed to claim live run marker in Redis: %w", err)
+	}
+	if updated == 0 {
+		return ErrLiveRunExists
 	}
 	return nil
 }
 
-// GetLiveRun returns the session's generating assistant message, if any.
-func (r *RedisStreamManager) GetLiveRun(
+// PeekExecution returns the session's generating assistant message, if any.
+func (r *RedisStreamManager) PeekExecution(
 	ctx context.Context,
 	sessionID string,
 ) (string, string, error) {
@@ -447,18 +446,25 @@ func (r *RedisStreamManager) GetLiveRun(
 		// treat empty as new_run and would start a second AgentQA.
 		return "", "", fmt.Errorf("failed to decode live run marker: %w", err)
 	}
-	r.touchLiveRun(ctx, sessionID)
 	return payload.AssistantMessageID, payload.RequestID, nil
 }
 
 // touchLiveRun extends the live-run marker so a turn longer than the
 // StreamManager TTL does not look idle. Expire on a missing key is a no-op.
-func (r *RedisStreamManager) touchLiveRun(ctx context.Context, sessionID string) {
+func (r *RedisStreamManager) touchLiveRun(ctx context.Context, sessionID, messageID string) {
 	if sessionID == "" {
 		return
 	}
-	_ = r.client.Expire(ctx, r.buildLiveRunKey(sessionID), r.ttl).Err()
+	_ = touchExecutionMessage.Run(ctx, r.client, []string{r.buildLiveRunKey(sessionID)}, messageID, r.ttl.Milliseconds()).Err()
 }
+
+var touchExecutionMessage = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local marker = cjson.decode(raw)
+if marker.assistant_message_id ~= ARGV[1] then return 0 end
+return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+`)
 
 // clearLiveRunCAS deletes the marker only when it still names the run being
 // torn down, so a follow-up run that already claimed the session keeps it.
@@ -467,31 +473,54 @@ local raw = redis.call('GET', KEYS[1])
 if not raw then
   return 0
 end
-if string.find(raw, ARGV[1], 1, true) == nil then
+local marker = cjson.decode(raw)
+if marker.assistant_message_id ~= ARGV[1] or marker.request_id ~= ARGV[2] then
   return 0
 end
 redis.call('DEL', KEYS[1])
 return 1
 `)
 
-// ClearLiveRun drops the marker only when it still points at assistantMessageID.
-func (r *RedisStreamManager) ClearLiveRun(
+// ReleaseExecution drops the marker only when it still points at assistantMessageID.
+func (r *RedisStreamManager) ReleaseExecution(
 	ctx context.Context,
-	sessionID, assistantMessageID string,
+	sessionID, assistantMessageID, requestID string,
 ) error {
 	if assistantMessageID == "" {
 		return nil
 	}
-	// Match the serialized field rather than decoding in Lua: the marker is
-	// written by SetLiveRun above, so the encoding is ours to rely on.
-	idJSON, err := json.Marshal(assistantMessageID)
-	if err != nil {
-		return fmt.Errorf("failed to marshal assistant message id: %w", err)
-	}
-	needle := `"assistant_message_id":` + string(idJSON)
 	if err := clearLiveRunCAS.Run(ctx, r.client,
-		[]string{r.buildLiveRunKey(sessionID)}, needle).Err(); err != nil && err != redis.Nil {
+		[]string{r.buildLiveRunKey(sessionID)}, assistantMessageID, requestID).Err(); err != nil && err != redis.Nil {
 		return fmt.Errorf("failed to clear live run marker in Redis: %w", err)
+	}
+	return nil
+}
+
+var replaceExecutionCAS = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local marker = cjson.decode(raw)
+if marker.assistant_message_id ~= ARGV[1] or marker.request_id ~= ARGV[2] then return 0 end
+redis.call('SET', KEYS[1], ARGV[3], 'PX', ARGV[4])
+return 1
+`)
+
+var renewExecutionCAS = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local marker = cjson.decode(raw)
+if marker.assistant_message_id ~= ARGV[1] or marker.request_id ~= ARGV[2] then return 0 end
+redis.call('PEXPIRE', KEYS[1], ARGV[3])
+return 1
+`)
+
+func (r *RedisStreamManager) RenewExecution(ctx context.Context, sessionID, messageID, requestID string) error {
+	updated, err := renewExecutionCAS.Run(ctx, r.client, []string{r.buildLiveRunKey(sessionID)}, messageID, requestID, r.ttl.Milliseconds()).Int()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return ErrLiveRunExists
 	}
 	return nil
 }
@@ -518,12 +547,12 @@ func (r *RedisStreamManager) DropMessageStreams(
 			return fmt.Errorf("failed to drop message streams in Redis: %w", err)
 		}
 	}
-	liveID, _, err := r.GetLiveRun(ctx, sessionID)
+	liveID, liveRequest, err := r.PeekExecution(ctx, sessionID)
 	if err != nil {
 		return err
 	}
 	if _, ok := wantLive[liveID]; ok {
-		if err := r.ClearLiveRun(ctx, sessionID, liveID); err != nil {
+		if err := r.ReleaseExecution(ctx, sessionID, liveID, liveRequest); err != nil {
 			return err
 		}
 	}

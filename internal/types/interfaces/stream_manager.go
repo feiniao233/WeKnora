@@ -53,22 +53,23 @@ type StreamManager interface {
 	// the event is missing. Used when the user dismisses an overlay item.
 	DeleteSteerEvent(ctx context.Context, sessionID, messageID, eventID string) (bool, error)
 
-	// SetLiveRun records which assistant message is currently generating for
+	// ClaimExecution records which assistant message is currently generating for
 	// a session. It is exclusive: if another assistant is already live, it
 	// returns an error so executeQA cannot start a second engine. Calling it
-	// again for the same assistant is a no-op. Follow-up handoff that must
-	// replace the previous run uses ClaimLiveRun.
-	SetLiveRun(ctx context.Context, sessionID, assistantMessageID, requestID string) error
+	// again for the same message and request is a no-op. Follow-up handoff that must
+	// replace the previous run uses ReplaceExecution.
+	ClaimExecution(ctx context.Context, sessionID, assistantMessageID, requestID string) error
 
-	// ClaimLiveRun overwrites the live-run marker. Used when a finishing
-	// turn hands the session to a follow-up before it CAS-clears itself.
-	ClaimLiveRun(ctx context.Context, sessionID, assistantMessageID, requestID string) error
+	// ReplaceExecution atomically hands off an owned execution to a follow-up.
+	ReplaceExecution(ctx context.Context, sessionID, oldMessageID, oldRequestID, assistantMessageID, requestID string) error
+	// RenewExecution extends only the owning execution's lease.
+	RenewExecution(ctx context.Context, sessionID, assistantMessageID, requestID string) error
 
-	// GetLiveRun returns the session's generating assistant message, or empty
-	// strings when no run is marked live.
-	GetLiveRun(ctx context.Context, sessionID string) (assistantMessageID, requestID string, err error)
+	// PeekExecution returns the session's generating assistant message, or empty
+	// strings when no run is marked live. It never renews the lease.
+	PeekExecution(ctx context.Context, sessionID string) (assistantMessageID, requestID string, err error)
 
-	// ClearLiveRun drops the marker, but only when it still points at
-	// assistantMessageID: a follow-up run may already have replaced it.
-	ClearLiveRun(ctx context.Context, sessionID, assistantMessageID string) error
+	// ReleaseExecution drops the marker, but only when it still points at
+	// both assistantMessageID and requestID: a follow-up may have replaced it.
+	ReleaseExecution(ctx context.Context, sessionID, assistantMessageID, requestID string) error
 }

@@ -23,22 +23,22 @@ func newTestRedisStreamManager(t *testing.T, ttl time.Duration) (*RedisStreamMan
 // A corrupt live-run marker used to decode as "no run is live". Steer then
 // answered new_run and the client started a second AgentQA on top of the
 // still-generating turn. Lookup failures must surface as errors instead.
-func TestGetLiveRunCorruptJSONIsError(t *testing.T) {
+func TestPeekExecutionCorruptJSONIsError(t *testing.T) {
 	mgr, mini := newTestRedisStreamManager(t, time.Hour)
 	ctx := context.Background()
 
 	require.NoError(t, mini.Set(mgr.buildLiveRunKey("sess-1"), "not-json"))
 
-	id, req, err := mgr.GetLiveRun(ctx, "sess-1")
+	id, req, err := mgr.PeekExecution(ctx, "sess-1")
 	require.Error(t, err)
 	require.Empty(t, id)
 	require.Empty(t, req)
 }
 
-func TestGetLiveRunMissingKeyIsEmpty(t *testing.T) {
+func TestPeekExecutionMissingKeyIsEmpty(t *testing.T) {
 	mgr, _ := newTestRedisStreamManager(t, time.Hour)
 
-	id, req, err := mgr.GetLiveRun(context.Background(), "sess-missing")
+	id, req, err := mgr.PeekExecution(context.Background(), "sess-missing")
 	require.NoError(t, err)
 	require.Empty(t, id)
 	require.Empty(t, req)
@@ -52,7 +52,7 @@ func TestAppendEventRefreshesLiveRunTTL(t *testing.T) {
 	mgr, mini := newTestRedisStreamManager(t, ttl)
 	ctx := context.Background()
 
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-1", "req-1"))
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess-1", "assist-1", "req-1"))
 	mini.FastForward(ttl - 200*time.Millisecond)
 
 	require.NoError(t, mgr.AppendEvent(ctx, "sess-1", "assist-1", interfaces.StreamEvent{
@@ -62,7 +62,7 @@ func TestAppendEventRefreshesLiveRunTTL(t *testing.T) {
 	}))
 	mini.FastForward(ttl - 200*time.Millisecond)
 
-	id, _, err := mgr.GetLiveRun(ctx, "sess-1")
+	id, _, err := mgr.PeekExecution(ctx, "sess-1")
 	require.NoError(t, err)
 	require.Equal(t, "assist-1", id)
 }
@@ -72,14 +72,14 @@ func TestGetEventsRefreshesLiveRunTTLWhileWaiting(t *testing.T) {
 	mgr, mini := newTestRedisStreamManager(t, ttl)
 	ctx := context.Background()
 
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-1", "req-1"))
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess-1", "assist-1", "req-1"))
 	mini.FastForward(ttl - 200*time.Millisecond)
 
 	_, _, err := mgr.GetEvents(ctx, "sess-1", "assist-1", 0)
 	require.NoError(t, err)
 	mini.FastForward(ttl - 200*time.Millisecond)
 
-	id, _, err := mgr.GetLiveRun(ctx, "sess-1")
+	id, _, err := mgr.PeekExecution(ctx, "sess-1")
 	require.NoError(t, err)
 	require.Equal(t, "assist-1", id)
 }
@@ -89,7 +89,7 @@ func TestAppendSteerEventsRefreshesLiveRunTTL(t *testing.T) {
 	mgr, mini := newTestRedisStreamManager(t, ttl)
 	ctx := context.Background()
 
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-1", "req-1"))
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess-1", "assist-1", "req-1"))
 	mini.FastForward(ttl - 200*time.Millisecond)
 
 	require.NoError(t, mgr.AppendSteerEvents(ctx, "sess-1", "assist-1", []interfaces.StreamEvent{{
@@ -100,53 +100,53 @@ func TestAppendSteerEventsRefreshesLiveRunTTL(t *testing.T) {
 	}}))
 	mini.FastForward(ttl - 200*time.Millisecond)
 
-	id, _, err := mgr.GetLiveRun(ctx, "sess-1")
+	id, _, err := mgr.PeekExecution(ctx, "sess-1")
 	require.NoError(t, err)
 	require.Equal(t, "assist-1", id)
 }
 
-func TestSetLiveRunRejectsADifferentAssistant(t *testing.T) {
+func TestClaimExecutionRejectsADifferentAssistant(t *testing.T) {
 	mgr, _ := newTestRedisStreamManager(t, time.Hour)
 	ctx := context.Background()
 
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-1", "req-1"))
-	require.ErrorIs(t, mgr.SetLiveRun(ctx, "sess-1", "assist-2", "req-2"), ErrLiveRunExists)
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess-1", "assist-1", "req-1"))
+	require.ErrorIs(t, mgr.ClaimExecution(ctx, "sess-1", "assist-2", "req-2"), ErrLiveRunExists)
 
-	id, req, err := mgr.GetLiveRun(ctx, "sess-1")
+	id, req, err := mgr.PeekExecution(ctx, "sess-1")
 	require.NoError(t, err)
 	require.Equal(t, "assist-1", id)
 	require.Equal(t, "req-1", req)
 }
 
-func TestSetLiveRunIsIdempotentForTheSameAssistant(t *testing.T) {
+func TestClaimExecutionIsIdempotentForTheSameAssistant(t *testing.T) {
 	mgr, _ := newTestRedisStreamManager(t, time.Hour)
 	ctx := context.Background()
 
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-1", "req-1"))
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-1", "req-1"))
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess-1", "assist-1", "req-1"))
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess-1", "assist-1", "req-1"))
 }
 
-func TestClaimLiveRunOverwritesTheMarker(t *testing.T) {
+func TestReplaceExecutionOverwritesTheMarker(t *testing.T) {
 	mgr, _ := newTestRedisStreamManager(t, time.Hour)
 	ctx := context.Background()
 
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-1", "req-1"))
-	require.NoError(t, mgr.ClaimLiveRun(ctx, "sess-1", "assist-2", "req-2"))
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess-1", "assist-1", "req-1"))
+	require.NoError(t, mgr.ReplaceExecution(ctx, "sess-1", "assist-1", "req-1", "assist-2", "req-2"))
 
-	id, req, err := mgr.GetLiveRun(ctx, "sess-1")
+	id, req, err := mgr.PeekExecution(ctx, "sess-1")
 	require.NoError(t, err)
 	require.Equal(t, "assist-2", id)
 	require.Equal(t, "req-2", req)
 }
 
-func TestMemorySetLiveRunRejectsADifferentAssistant(t *testing.T) {
+func TestMemoryClaimExecutionRejectsADifferentAssistant(t *testing.T) {
 	mgr := NewMemoryStreamManager()
 	ctx := context.Background()
 
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-1", "req-1"))
-	require.ErrorIs(t, mgr.SetLiveRun(ctx, "sess-1", "assist-2", "req-2"), ErrLiveRunExists)
-	require.NoError(t, mgr.ClaimLiveRun(ctx, "sess-1", "assist-2", "req-2"))
-	id, _, err := mgr.GetLiveRun(ctx, "sess-1")
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess-1", "assist-1", "req-1"))
+	require.ErrorIs(t, mgr.ClaimExecution(ctx, "sess-1", "assist-2", "req-2"), ErrLiveRunExists)
+	require.NoError(t, mgr.ReplaceExecution(ctx, "sess-1", "assist-1", "req-1", "assist-2", "req-2"))
+	id, _, err := mgr.PeekExecution(ctx, "sess-1")
 	require.NoError(t, err)
 	require.Equal(t, "assist-2", id)
 }
@@ -188,7 +188,7 @@ func TestDropMessageStreamsRemovesEventsSteerAndLiveRun(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, mgr.AppendEvent(ctx, "sess", "a-1", interfaces.StreamEvent{ID: "e1"}))
 	require.NoError(t, mgr.AppendSteerEvents(ctx, "sess", "a-1", []interfaces.StreamEvent{{ID: "s1"}}))
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess", "a-1", "req"))
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess", "a-1", "req"))
 
 	require.NoError(t, mgr.DropMessageStreams(ctx, "sess", []string{"a-1"}))
 
@@ -198,7 +198,7 @@ func TestDropMessageStreamsRemovesEventsSteerAndLiveRun(t *testing.T) {
 	steer, _, err := mgr.GetSteerEvents(ctx, "sess", "a-1", 0)
 	require.NoError(t, err)
 	require.Empty(t, steer)
-	liveID, _, err := mgr.GetLiveRun(ctx, "sess")
+	liveID, _, err := mgr.PeekExecution(ctx, "sess")
 	require.NoError(t, err)
 	require.Empty(t, liveID)
 }
@@ -208,7 +208,7 @@ func TestRedisDropMessageStreamsRemovesEventsSteerAndLiveRun(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, mgr.AppendEvent(ctx, "sess", "a-1", interfaces.StreamEvent{ID: "e1"}))
 	require.NoError(t, mgr.AppendSteerEvents(ctx, "sess", "a-1", []interfaces.StreamEvent{{ID: "s1"}}))
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess", "a-1", "req"))
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess", "a-1", "req"))
 
 	require.NoError(t, mgr.DropMessageStreams(ctx, "sess", []string{"a-1"}))
 
@@ -218,7 +218,7 @@ func TestRedisDropMessageStreamsRemovesEventsSteerAndLiveRun(t *testing.T) {
 	steer, _, err := mgr.GetSteerEvents(ctx, "sess", "a-1", 0)
 	require.NoError(t, err)
 	require.Empty(t, steer)
-	liveID, _, err := mgr.GetLiveRun(ctx, "sess")
+	liveID, _, err := mgr.PeekExecution(ctx, "sess")
 	require.NoError(t, err)
 	require.Empty(t, liveID)
 }

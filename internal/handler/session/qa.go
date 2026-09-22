@@ -156,6 +156,9 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	}
 
 	// Validate query content
+	if !validActionID(request.ActionID) {
+		return nil, nil, errors.NewBadRequestError("invalid action_id")
+	}
 	if request.Query == "" {
 		logger.Error(ctx, "Query content is empty")
 		return nil, nil, errors.NewBadRequestError("Query content cannot be empty")
@@ -198,8 +201,38 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		return nil, nil, errors.NewNotFoundError("Session not found")
 	}
 
+	if session.AgentID != "" {
+		if request.AgentSourceTenantID != 0 {
+			return nil, nil, errors.NewBadRequestError("Bound sessions do not accept an agent source override")
+		}
+		if request.AgentID != "" && request.AgentID != session.AgentID {
+			return nil, nil, errors.NewBadRequestError("Session agent binding is immutable")
+		}
+		request.AgentID = session.AgentID
+	}
 	// Get custom agent if agent_id is provided. Backend resolves shared agent from share relation (no client-provided tenant).
 	customAgent, effectiveTenantID, sharedAgentReadOnly := h.resolveAgent(ctx, c, request.AgentID, request.AgentSourceTenantID)
+	if session.AgentID != "" && customAgent == nil {
+		return nil, nil, errors.NewNotFoundError("Bound agent not found")
+	}
+	if customAgent != nil {
+		// Every run receives a private, resolved MCP scope. Mentions only set
+		// priority and must not be mistaken for the registration scope.
+		copyAgent := *customAgent
+		customAgent = &copyAgent
+		if sharedAgentReadOnly && customAgent.Config.MCPSelectionMode == "" {
+			customAgent.Config.MCPSelectionMode = "none"
+		}
+		if err := h.resolveExecutionMCPScope(ctx, customAgent, effectiveTenantID); err != nil {
+			return nil, nil, errors.NewBadRequestError(err.Error())
+		}
+		h.resolveExecutionSkillScope(ctx, session, customAgent, effectiveTenantID)
+	}
+	if request.SourceMessageID != "" {
+		if err := h.applySourceExecution(ctx, session, customAgent, &request); err != nil {
+			return nil, nil, errors.NewBadRequestError(err.Error())
+		}
+	}
 	if request.AgentSourceTenantID != 0 && customAgent == nil {
 		return nil, nil, errors.NewNotFoundError("Shared agent not found")
 	}
@@ -404,6 +437,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	)
 
 	executionContext.LocalBrowserEnabled = request.LocalBrowserEnabled
+	executionContext.ActionID = request.ActionID
 
 	// Build request context
 	reqCtx := &qaRequestContext{
@@ -589,6 +623,8 @@ func buildMessageExecutionContext(
 		snapshot.ExecutionConfigHash = fmt.Sprintf("sha256-v1:%x", hash[:])
 	}
 	snapshot.SkillsSelectionMode = config.SkillsSelectionMode
+	snapshot.MCPSelectionMode = config.MCPSelectionMode
+	snapshot.ResolvedMCPServiceIDs = append([]string(nil), config.MCPServices...)
 	snapshot.SelectedSkillNames = append([]string(nil), config.SelectedSkills...)
 	snapshot.SkillNames = append([]string(nil), skillNames...)
 
@@ -706,6 +742,7 @@ func mergeKnowledgeTargets(requestKBIDs []string, requestKnowledgeIDs []string, 
 
 // sseStreamContext holds the context for SSE streaming
 type sseStreamContext struct {
+	releaseExecution func()
 	eventBus         *event.EventBus
 	asyncCtx         context.Context
 	cancel           context.CancelFunc
@@ -714,7 +751,7 @@ type sseStreamContext struct {
 	// steerSink bridges the engine's round-boundary drain to the steer
 	// sub-list and user-row persistence. Nil for non-agent modes.
 	steerSink *steerSink
-	// liveRunFailed is set when SetLiveRun failed. executeQA must not start
+	// liveRunFailed is set when ClaimExecution failed. executeQA must not start
 	// the engine: /steer would see no marker and the client would start a
 	// second turn.
 	liveRunFailed bool
@@ -770,14 +807,14 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 	}
 
 	// Mid-run steering: only ReAct agent turns (qaModeAgent) have an engine
-	// loop to drain at and a teardown that ClearLiveRun / kick / discard.
+	// loop to drain at and a teardown that ReleaseExecution / kick / discard.
 	// A custom agent configured as quick-answer still has customAgent != nil
 	// but executeQA runs KnowledgeQA — publishing a sink there parks /steer
 	// messages until the Redis TTL expires. The sink is also mirrored onto
 	// reqCtx so the async goroutine's buildQARequest() picks it up — the
 	// streamCtx copy alone is never read by the QA call path.
 	//
-	// SetLiveRun happens before SSE headers: a 409/503 after text/event-stream
+	// ClaimExecution happens before SSE headers: a 409/503 after text/event-stream
 	// has started cannot change the status, and the client would sit on a
 	// stream nobody will write to.
 	if mode == qaModeAgent && reqCtx.customAgent != nil {
@@ -786,8 +823,9 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 			h.messageService, h.streamManager,
 		)
 		reqCtx.steerSink = streamCtx.steerSink
-
-		if err := h.streamManager.SetLiveRun(
+	}
+	{
+		if err := h.streamManager.ClaimExecution(
 			logger.CloneContext(baseCtx), reqCtx.sessionID,
 			reqCtx.assistantMessage.ID, reqCtx.requestID,
 		); err != nil {
@@ -799,6 +837,31 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 			return streamCtx
 		}
 	}
+	heartbeatCtx, stopHeartbeat := context.WithCancel(context.WithoutCancel(asyncCtx))
+	streamCtx.releaseExecution = sync.OnceFunc(func() {
+		stopHeartbeat()
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(asyncCtx), 5*time.Second)
+		defer cancel()
+		if err := h.streamManager.ReleaseExecution(cleanup, reqCtx.sessionID, reqCtx.assistantMessage.ID, reqCtx.requestID); err != nil {
+			logger.Warnf(cleanup, "Execution release failed: %v", err)
+		}
+	})
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				if err := h.streamManager.RenewExecution(heartbeatCtx, reqCtx.sessionID, reqCtx.assistantMessage.ID, reqCtx.requestID); err != nil {
+					_ = eventBus.Emit(context.WithoutCancel(asyncCtx), event.Event{Type: event.EventError, SessionID: reqCtx.sessionID, Data: event.ErrorData{Error: "execution lease lost", Stage: "execution_lease"}})
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 
 	if !reqCtx.skipSSE {
 		setSSEHeaders(reqCtx.c)
@@ -814,6 +877,12 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool, m
 
 	// Setup stop event handler
 	h.setupStopEventHandler(asyncCtx, eventBus, reqCtx.sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancel, mode == qaModeNormal)
+	if mode == qaModeNormal {
+		eventBus.On(event.EventStop, func(context.Context, event.Event) error {
+			streamCtx.releaseExecution()
+			return nil
+		})
+	}
 
 	// Watch for stop events independently of the client SSE connection so a
 	// user-requested stop reliably cancels generation even when the client
@@ -1043,7 +1112,7 @@ const (
 )
 
 // persistTurnMessages writes the user and assistant rows for this turn.
-// Follow-up handoff calls it before SetLiveRun so POST /steer can verify the
+// Follow-up handoff calls it before ClaimExecution so POST /steer can verify the
 // new assistant instead of seeing an empty session. executeQA skips work that
 // is already done when those IDs are populated.
 func (h *Handler) persistTurnMessages(ctx context.Context, reqCtx *qaRequestContext) error {
@@ -1095,7 +1164,7 @@ func (h *Handler) persistTurnMessages(ctx context.Context, reqCtx *qaRequestCont
 }
 
 // rollbackTurnMessages deletes user/assistant rows this request just created
-// so a failed SetLiveRun / ClaimLiveRun cannot leave an orphan turn in history.
+// so a failed ClaimExecution / ReplaceExecution cannot leave an orphan turn in history.
 func (h *Handler) rollbackTurnMessages(ctx context.Context, reqCtx *qaRequestContext, user, assistant bool) {
 	if h.messageService == nil || reqCtx == nil {
 		return
@@ -1118,7 +1187,7 @@ func (h *Handler) rollbackTurnMessages(ctx context.Context, reqCtx *qaRequestCon
 }
 
 func (h *Handler) rejectIfOtherAgentRunLive(ctx context.Context, reqCtx *qaRequestContext) error {
-	liveID, _, err := h.streamManager.GetLiveRun(ctx, reqCtx.sessionID)
+	liveID, _, err := h.streamManager.PeekExecution(ctx, reqCtx.sessionID)
 	if err != nil {
 		return errors.NewServiceUnavailableError("Failed to look up running turn")
 	}
@@ -1265,6 +1334,12 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 
 	createdUser := reqCtx.userMessageID == ""
 	createdAssistant := reqCtx.assistantMessage == nil || reqCtx.assistantMessage.ID == ""
+	if reqCtx.assistantMessage != nil {
+		reqCtx.assistantMessage.ExecutionContext.ExecutionMode = "quick-answer"
+		if mode == qaModeAgent {
+			reqCtx.assistantMessage.ExecutionContext.ExecutionMode = "smart-reasoning"
+		}
+	}
 
 	// Create user message. Include pre-uploaded document metadata so history
 	// reload shows the attachments even though their content is selected later.
@@ -1381,6 +1456,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 		defer close(asyncDone)
 		defer func() {
 			if r := recover(); r != nil {
+				if streamCtx.releaseExecution != nil {
+					streamCtx.releaseExecution()
+				}
 				if streamCtx.releaseTurn != nil {
 					streamCtx.releaseTurn()
 				}
@@ -1419,9 +1497,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 				}
 
 				// Claim any follow-up before completing this row. liveAgentRun
-				// treats a completed assistant as idle and would ClearLiveRun
+				// treats a completed assistant as idle and would ReleaseExecution
 				// the old marker — exactly the new_run window. The follow-up
-				// SetLiveRun's first; this run's CAS ClearLiveRun then no-ops.
+				// ClaimExecution's first; this run's CAS ReleaseExecution then no-ops.
 				if streamCtx.asyncCtx.Err() != nil {
 					// The turn was cancelled — a user stop. Stopping means
 					// stopping: queued follow-ups are dropped rather than
@@ -1438,7 +1516,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 						_ = streamCtx.streamHandler.handleError(updateCtx, event.Event{Data: event.ErrorData{Error: "execution result could not be saved", Stage: "message_persistence"}})
 					}
 					// A /steer that landed while we were completing still sits
-					// on this run. Claim it before ClearLiveRun so it is not
+					// on this run. Claim it before ReleaseExecution so it is not
 					// stranded on a list nobody will drain.
 					if !kicked {
 						h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
@@ -1451,10 +1529,8 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 					}
 				}
 				_ = streamCtx.streamHandler.flushCompletion(updateCtx)
-				if err := h.streamManager.ClearLiveRun(
-					updateCtx, sessionID, streamCtx.assistantMessage.ID,
-				); err != nil {
-					logger.Warnf(updateCtx, "live run cleanup failed for session %s: %v", sessionID, err)
+				if streamCtx.releaseExecution != nil {
+					streamCtx.releaseExecution()
 				}
 				logger.Infof(streamCtx.asyncCtx, "Agent QA service completed for session: %s", sessionID)
 			}
@@ -1890,6 +1966,9 @@ func (h *Handler) completeQuickAnswerTurn(
 ) {
 	if streamCtx == nil || streamCtx.assistantMessage == nil {
 		return
+	}
+	if streamCtx.releaseExecution != nil {
+		defer streamCtx.releaseExecution()
 	}
 	if streamCtx.eventBus != nil {
 		// MessageID is what handleComplete keys on. Leave FinalAnswer empty:

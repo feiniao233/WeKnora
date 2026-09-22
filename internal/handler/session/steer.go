@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -316,7 +317,7 @@ func (s *steerSink) LastPersistedUserMessageID() string {
 // SteerMessage would answer new_run and the client would POST a second AgentQA
 // while the first is still generating.
 func (h *Handler) liveAgentRun(ctx context.Context, sessionID string) (string, error) {
-	assistantID, _, err := h.streamManager.GetLiveRun(ctx, sessionID)
+	assistantID, requestID, err := h.streamManager.PeekExecution(ctx, sessionID)
 	if err != nil {
 		return "", err
 	}
@@ -329,10 +330,13 @@ func (h *Handler) liveAgentRun(ctx context.Context, sessionID string) (string, e
 		return "", err
 	}
 	if msg == nil || msg.IsCompleted {
-		if err := h.streamManager.ClearLiveRun(ctx, sessionID, assistantID); err != nil {
+		if err := h.streamManager.ReleaseExecution(ctx, sessionID, assistantID, requestID); err != nil {
 			logger.Warnf(ctx, "stale live run cleanup failed for session %s: %v", sessionID, err)
 		}
 		return "", nil
+	}
+	if msg.ExecutionContext.ExecutionMode == "quick-answer" {
+		return "", errors.NewConflictError("quick-answer execution does not accept steering")
 	}
 	return assistantID, nil
 }
@@ -344,6 +348,10 @@ func (h *Handler) resolveLiveAgentRun(ctx context.Context, c *gin.Context, sessi
 	assistantID, err := h.liveAgentRun(ctx, sessionID)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{"session_id": sessionID})
+		if appErr, ok := stderrors.AsType[*errors.AppError](err); ok {
+			_ = c.Error(appErr)
+			return "", false
+		}
 		_ = c.Error(errors.NewServiceUnavailableError("Failed to look up running turn"))
 		return "", false
 	}
@@ -848,7 +856,7 @@ func (h *Handler) discardSteerBacklog(
 // boundaries.
 //
 // The follow-up is published as the session's live run before this function
-// returns, so the finished run's subsequent ClearLiveRun cannot open a
+// returns, so the finished run's subsequent ReleaseExecution cannot open a
 // window where POST /steer answers new_run. executeQA is started afterwards
 // and skips message creation that claimNextSteerFollowUp already did.
 //
@@ -878,7 +886,7 @@ func (h *Handler) kickNextRunFromSteerBacklog(
 	return true
 }
 
-// claimNextSteerFollowUp persists the follow-up turn and SetLiveRun's it so
+// claimNextSteerFollowUp persists the follow-up turn and ClaimExecution's it so
 // the session is never unmarked between the previous run exiting and the
 // next engine loop starting. Returns false when there is nothing to hand off.
 func (h *Handler) claimNextSteerFollowUp(
@@ -952,8 +960,8 @@ func (h *Handler) claimNextSteerFollowUp(
 		h.rollbackTurnMessages(ctx, &followUp, true, true)
 		return nil, false
 	}
-	if err := h.streamManager.ClaimLiveRun(
-		ctx, followUp.sessionID, followUp.assistantMessage.ID, followUp.requestID,
+	if err := h.streamManager.ReplaceExecution(
+		ctx, followUp.sessionID, prevMessageID, prevReqCtx.requestID, followUp.assistantMessage.ID, followUp.requestID,
 	); err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"session_id": followUp.sessionID,
@@ -998,7 +1006,7 @@ func (h *Handler) markSteerEventsConsumed(
 }
 
 // rebindSteerIfLiveRunMoved moves an event that landed on a run that has
-// already handed off. Lookup-then-append is not atomic with SetLiveRun.
+// already handed off. Lookup-then-append is not atomic with ClaimExecution.
 func (h *Handler) rebindSteerIfLiveRunMoved(
 	ctx context.Context, sessionID, appendedOn string, evt interfaces.StreamEvent,
 ) (string, string, error) {

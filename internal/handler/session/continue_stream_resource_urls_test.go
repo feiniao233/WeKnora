@@ -82,19 +82,21 @@ func (s *stubStreamManager) DeleteSteerEvent(
 	return false, nil
 }
 
-func (s *stubStreamManager) SetLiveRun(context.Context, string, string, string) error {
+func (s *stubStreamManager) ClaimExecution(context.Context, string, string, string) error {
 	return nil
 }
 
-func (s *stubStreamManager) ClaimLiveRun(context.Context, string, string, string) error {
+func (s *stubStreamManager) RenewExecution(context.Context, string, string, string) error { return nil }
+
+func (s *stubStreamManager) ReplaceExecution(context.Context, string, string, string, string, string) error {
 	return nil
 }
 
-func (s *stubStreamManager) GetLiveRun(context.Context, string) (string, string, error) {
+func (s *stubStreamManager) PeekExecution(context.Context, string) (string, string, error) {
 	return "", "", nil
 }
 
-func (s *stubStreamManager) ClearLiveRun(context.Context, string, string) error {
+func (s *stubStreamManager) ReleaseExecution(context.Context, string, string, string) error {
 	return nil
 }
 

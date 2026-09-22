@@ -66,7 +66,7 @@ func TestSetupSSEStreamMirrorsSteerSinkOntoRequestContext(t *testing.T) {
 	// process-local map: a steer request that lands on another replica has
 	// to find this run instead of reporting "no run is live" and starting a
 	// duplicate turn.
-	liveID, liveReq, err := streams.GetLiveRun(t.Context(), "sess-1")
+	liveID, liveReq, err := streams.PeekExecution(t.Context(), "sess-1")
 	require.NoError(t, err)
 	assert.Equal(t, "assist-1", liveID, "agent run must be published as the session's live run")
 	assert.Equal(t, "req-1", liveReq)
@@ -96,18 +96,15 @@ func TestSetupSSEStreamNoSinkWithoutCustomAgent(t *testing.T) {
 	qaReq := reqCtx.buildQARequest()
 	assert.Nil(t, qaReq.SteerSink)
 
-	// Quick-answer turns must not claim the session either: there is no
-	// engine loop to drain a queue, so a steer request pointed here would
-	// park messages that never run.
-	liveID, _, err := streams.GetLiveRun(t.Context(), "sess-2")
+	// Quick-answer still claims execution, but has no steering sink.
+	liveID, _, err := streams.PeekExecution(t.Context(), "sess-2")
 	require.NoError(t, err)
-	assert.Empty(t, liveID, "non-agent run must not be published as the live run")
+	assert.Equal(t, "assist-2", liveID, "all chat modes must claim execution")
 }
 
 // A custom agent configured as quick-answer still has customAgent != nil, but
-// executeQA runs KnowledgeQA (qaModeNormal). Publishing a steer sink / live
-// marker there parks /steer messages on a turn with no engine loop and no
-// teardown ClearLiveRun.
+// executeQA runs KnowledgeQA (qaModeNormal). It claims execution without
+// publishing a steering sink on a turn with no engine loop.
 func TestSetupSSEStreamNoSinkForQuickAnswerCustomAgent(t *testing.T) {
 	streams := stream.NewMemoryStreamManager()
 	h := &Handler{streamManager: streams}
@@ -134,10 +131,10 @@ func TestSetupSSEStreamNoSinkForQuickAnswerCustomAgent(t *testing.T) {
 	assert.Nil(t, reqCtx.steerSink)
 	assert.Nil(t, reqCtx.buildQARequest().SteerSink)
 
-	liveID, _, err := streams.GetLiveRun(t.Context(), "sess-3")
+	liveID, _, err := streams.PeekExecution(t.Context(), "sess-3")
 	require.NoError(t, err)
-	assert.Empty(t, liveID,
-		"quick-answer custom-agent turns must not publish a live-run marker")
+	assert.Equal(t, "assist-3", liveID,
+		"quick-answer must claim execution without publishing a steer sink")
 }
 
 // KnowledgeQA can still resolve a smart-reasoning agent_id (API / stale
@@ -165,14 +162,14 @@ func TestSetupSSEStreamNoSinkForKnowledgeQAEvenWithAgentModeAgent(t *testing.T) 
 	streamCtx := h.setupSSEStream(reqCtx, false, qaModeNormal)
 	require.NotNil(t, streamCtx)
 	assert.Nil(t, streamCtx.steerSink)
-	liveID, _, err := streams.GetLiveRun(t.Context(), "sess-4")
+	liveID, _, err := streams.PeekExecution(t.Context(), "sess-4")
 	require.NoError(t, err)
-	assert.Empty(t, liveID)
+	assert.Equal(t, "assist-4", liveID)
 }
 
 func TestSetupSSEStreamDoesNotWriteSSEWhenLiveRunFails(t *testing.T) {
 	streams := stream.NewMemoryStreamManager()
-	require.NoError(t, streams.SetLiveRun(t.Context(), "sess-5", "other-assist", "req-other"))
+	require.NoError(t, streams.ClaimExecution(t.Context(), "sess-5", "other-assist", "req-other"))
 	h := &Handler{streamManager: streams}
 
 	gin.SetMode(gin.TestMode)
@@ -194,5 +191,5 @@ func TestSetupSSEStreamDoesNotWriteSSEWhenLiveRunFails(t *testing.T) {
 	streamCtx := h.setupSSEStream(reqCtx, false, qaModeAgent)
 	require.True(t, streamCtx.liveRunFailed)
 	assert.NotEqual(t, "text/event-stream", w.Header().Get("Content-Type"),
-		"SetLiveRun failure must not start an SSE response the client cannot recover from")
+		"ClaimExecution failure must not start an SSE response the client cannot recover from")
 }

@@ -53,6 +53,8 @@ func RegisterSessionRoutes(
 		sessions.POST("", handler.CreateSession)
 		sessions.DELETE("/batch", handler.BatchDeleteSessions)
 		sessions.GET("/:id", handler.GetSession)
+		sessions.GET("/:id/execution-state", handler.GetExecutionState)
+		sessions.GET("/:id/messages/:message_id/execution-context", handler.GetMessageExecutionContext)
 		sessions.GET("", handler.GetSessionsByTenant)
 		sessions.PUT("/:id", handler.UpdateSession)
 		sessions.DELETE("/:id", handler.DeleteSession)

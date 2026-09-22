@@ -358,10 +358,12 @@ func messagesWithExecutionProvenance(messages []*types.Message) []*types.Message
 			continue
 		}
 		copy := *message
+		copy.ActionID = message.ExecutionContext.ActionID
 		copy.ExecutionProvenance = nil
 		snapshot := message.ExecutionContext
 		if message.Role == "assistant" && snapshot.ExecutionConfigHash != "" {
 			copy.ExecutionProvenance = &types.MessageExecutionProvenance{
+				ActionID:            snapshot.ActionID,
 				ExecutionConfigHash: snapshot.ExecutionConfigHash,
 				SkillsSelectionMode: snapshot.SkillsSelectionMode,
 				SelectedSkillNames:  append([]string(nil), snapshot.SelectedSkillNames...),

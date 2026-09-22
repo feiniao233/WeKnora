@@ -241,14 +241,14 @@ func (m *MemoryStreamManager) DeleteSteerEvent(
 	return false, nil
 }
 
-// SetLiveRun records the session's currently generating assistant message.
-func (m *MemoryStreamManager) SetLiveRun(
+// ClaimExecution records the session's currently generating assistant message.
+func (m *MemoryStreamManager) ClaimExecution(
 	_ context.Context,
 	sessionID, assistantMessageID, requestID string,
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if existing, ok := m.liveRuns[sessionID]; ok && existing.assistantMessageID != assistantMessageID {
+	if existing, ok := m.liveRuns[sessionID]; ok && (existing.assistantMessageID != assistantMessageID || existing.requestID != requestID) {
 		return ErrLiveRunExists
 	}
 	m.liveRuns[sessionID] = liveRunMarker{
@@ -258,13 +258,17 @@ func (m *MemoryStreamManager) SetLiveRun(
 	return nil
 }
 
-// ClaimLiveRun overwrites the live-run marker for follow-up handoff.
-func (m *MemoryStreamManager) ClaimLiveRun(
+// ReplaceExecution overwrites the live-run marker for follow-up handoff.
+func (m *MemoryStreamManager) ReplaceExecution(
 	_ context.Context,
-	sessionID, assistantMessageID, requestID string,
+	sessionID, oldMessageID, oldRequestID, assistantMessageID, requestID string,
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	marker, ok := m.liveRuns[sessionID]
+	if !ok || marker.assistantMessageID != oldMessageID || marker.requestID != oldRequestID {
+		return ErrLiveRunExists
+	}
 	m.liveRuns[sessionID] = liveRunMarker{
 		assistantMessageID: assistantMessageID,
 		requestID:          requestID,
@@ -272,8 +276,8 @@ func (m *MemoryStreamManager) ClaimLiveRun(
 	return nil
 }
 
-// GetLiveRun returns the session's generating assistant message, if any.
-func (m *MemoryStreamManager) GetLiveRun(
+// PeekExecution returns the session's generating assistant message, if any.
+func (m *MemoryStreamManager) PeekExecution(
 	_ context.Context,
 	sessionID string,
 ) (string, string, error) {
@@ -286,15 +290,25 @@ func (m *MemoryStreamManager) GetLiveRun(
 	return marker.assistantMessageID, marker.requestID, nil
 }
 
-// ClearLiveRun drops the marker only when it still points at assistantMessageID.
-func (m *MemoryStreamManager) ClearLiveRun(
+// ReleaseExecution drops the marker only when it still points at assistantMessageID.
+func (m *MemoryStreamManager) ReleaseExecution(
 	_ context.Context,
-	sessionID, assistantMessageID string,
+	sessionID, assistantMessageID, requestID string,
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if marker, ok := m.liveRuns[sessionID]; ok && marker.assistantMessageID == assistantMessageID {
+	if marker, ok := m.liveRuns[sessionID]; ok && marker.assistantMessageID == assistantMessageID && marker.requestID == requestID {
 		delete(m.liveRuns, sessionID)
+	}
+	return nil
+}
+
+func (m *MemoryStreamManager) RenewExecution(_ context.Context, sessionID, assistantMessageID, requestID string) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	marker, ok := m.liveRuns[sessionID]
+	if !ok || marker.assistantMessageID != assistantMessageID || marker.requestID != requestID {
+		return ErrLiveRunExists
 	}
 	return nil
 }

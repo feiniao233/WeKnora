@@ -56,7 +56,7 @@ func (s *TenantSkillService) InstallGuidance(
 		return result, nil
 	}
 	err = s.withInstallSteerLock(ctx, skill.InstallSessionID, func(ctx context.Context) error {
-		live, _, err := s.streams.GetLiveRun(ctx, installSteerSession(skill.InstallSessionID))
+		live, _, err := s.streams.PeekExecution(ctx, installSteerSession(skill.InstallSessionID))
 		if err != nil {
 			return err
 		}
@@ -133,7 +133,7 @@ func (s *TenantSkillService) SteerInstall(
 				pending++
 			}
 		}
-		live, _, err := s.streams.GetLiveRun(ctx, installSteerSession(skill.InstallSessionID))
+		live, _, err := s.streams.PeekExecution(ctx, installSteerSession(skill.InstallSessionID))
 		if err != nil {
 			return err
 		}
@@ -166,7 +166,7 @@ func (sink *installSteerSink) PollSteer(
 ) ([]map[string]interface{}, int, error) {
 	// Refresh the dedicated marker while the engine is active, even when no
 	// console is polling. There is only one engine per maintenance session.
-	if err := sink.service.streams.SetLiveRun(ctx, installSteerSession(sessionID), messageID, ""); err != nil {
+	if err := sink.service.streams.ClaimExecution(ctx, installSteerSession(sessionID), messageID, ""); err != nil {
 		sink.err = err
 		return nil, offset, err
 	}
@@ -241,7 +241,7 @@ func (sink *installSteerSink) closeIfDrained(ctx context.Context) (bool, error) 
 				return nil
 			}
 		}
-		err = sink.service.streams.ClearLiveRun(ctx, installSteerSession(tr.sessionID), tr.assistantMessageID)
+		err = sink.service.streams.ReleaseExecution(ctx, installSteerSession(tr.sessionID), tr.assistantMessageID, "")
 		closed = err == nil
 		return err
 	})

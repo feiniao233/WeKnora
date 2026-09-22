@@ -50,11 +50,11 @@ type steerLiveRunLookupStub struct {
 	cleared     string
 }
 
-func (s *steerLiveRunLookupStub) GetLiveRun(context.Context, string) (string, string, error) {
+func (s *steerLiveRunLookupStub) PeekExecution(context.Context, string) (string, string, error) {
 	return s.assistantID, "req-1", s.err
 }
 
-func (s *steerLiveRunLookupStub) ClearLiveRun(_ context.Context, _, assistantID string) error {
+func (s *steerLiveRunLookupStub) ReleaseExecution(_ context.Context, _, assistantID, _ string) error {
 	s.cleared = assistantID
 	return nil
 }
@@ -135,7 +135,7 @@ func TestSteerMessageCompletedLiveRunStillReturnsNewRun(t *testing.T) {
 
 func TestSteerMessageQueuesWhenLiveRunIsVerified(t *testing.T) {
 	mgr := stream.NewMemoryStreamManager()
-	require.NoError(t, mgr.SetLiveRun(t.Context(), "sess-1", "assist-1", "req-1"))
+	require.NoError(t, mgr.ClaimExecution(t.Context(), "sess-1", "assist-1", "req-1"))
 	h := &Handler{
 		sessionService: &steerOwnedSessionStub{},
 		messageService: &steerMessageLookupStub{
@@ -219,15 +219,15 @@ func (s *steerPersistingMessageStub) GetMessage(_ context.Context, _, id string)
 	return &cloned, nil
 }
 
-// The previous run's ClearLiveRun used to run before the follow-up had an
+// The previous run's ReleaseExecution used to run before the follow-up had an
 // assistant row or a live marker. POST /steer then answered new_run and the
 // client started a second AgentQA alongside kick's executeQA. Claiming the
-// session (persist + SetLiveRun) must finish before that Clear, and the CAS
+// session (persist + ClaimExecution) must finish before that Clear, and the CAS
 // Clear of the old id must leave the new marker in place.
 func TestSteerFollowUpHandoffKeepsSessionLiveAcrossPreviousClear(t *testing.T) {
 	ctx := t.Context()
 	mgr := stream.NewMemoryStreamManager()
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-A", "req-A"))
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess-1", "assist-A", "req-A"))
 	require.NoError(t, mgr.AppendSteerEvents(ctx, "sess-1", "assist-A", []interfaces.StreamEvent{
 		steerEventWithDelivery("after-1", "do this next", steerDeliveryAfter),
 		steerEventWithDelivery("after-2", "then this", steerDeliveryAfter),
@@ -240,6 +240,7 @@ func TestSteerFollowUpHandoffKeepsSessionLiveAcrossPreviousClear(t *testing.T) {
 		streamManager:  mgr,
 	}
 	prev := &qaRequestContext{
+		requestID: "req-A",
 		sessionID: "sess-1",
 		session:   &types.Session{ID: "sess-1"},
 	}
@@ -253,16 +254,16 @@ func TestSteerFollowUpHandoffKeepsSessionLiveAcrossPreviousClear(t *testing.T) {
 	assert.NotEqual(t, "assist-A", followUp.assistantMessage.ID)
 	assert.Empty(t, followUp.steerCarryOver, "carry-over must already sit on the new run's list")
 
-	liveID, liveReq, err := mgr.GetLiveRun(ctx, "sess-1")
+	liveID, liveReq, err := mgr.PeekExecution(ctx, "sess-1")
 	require.NoError(t, err)
 	assert.Equal(t, followUp.assistantMessage.ID, liveID)
 	assert.Equal(t, followUp.requestID, liveReq)
 
-	require.NoError(t, mgr.ClearLiveRun(ctx, "sess-1", "assist-A"))
-	liveID, _, err = mgr.GetLiveRun(ctx, "sess-1")
+	require.NoError(t, mgr.ReleaseExecution(ctx, "sess-1", "assist-A", "req-A"))
+	liveID, _, err = mgr.PeekExecution(ctx, "sess-1")
 	require.NoError(t, err)
 	assert.Equal(t, followUp.assistantMessage.ID, liveID,
-		"ClearLiveRun of the finished run must not drop the follow-up marker")
+		"ReleaseExecution of the finished run must not drop the follow-up marker")
 
 	events, _, err := mgr.GetSteerEvents(ctx, "sess-1", followUp.assistantMessage.ID, 0)
 	require.NoError(t, err)
@@ -287,7 +288,7 @@ func TestSteerFollowUpHandoffKeepsSessionLiveAcrossPreviousClear(t *testing.T) {
 func TestClaimNextSteerFollowUpNoBacklogLeavesMarkerUntouched(t *testing.T) {
 	ctx := t.Context()
 	mgr := stream.NewMemoryStreamManager()
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-A", "req-A"))
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess-1", "assist-A", "req-A"))
 
 	h := &Handler{streamManager: mgr}
 	followUp, ok := h.claimNextSteerFollowUp(ctx, &qaRequestContext{sessionID: "sess-1"},
@@ -295,7 +296,7 @@ func TestClaimNextSteerFollowUpNoBacklogLeavesMarkerUntouched(t *testing.T) {
 	assert.False(t, ok)
 	assert.Nil(t, followUp)
 
-	liveID, _, err := mgr.GetLiveRun(ctx, "sess-1")
+	liveID, _, err := mgr.PeekExecution(ctx, "sess-1")
 	require.NoError(t, err)
 	assert.Equal(t, "assist-A", liveID)
 }
@@ -303,7 +304,7 @@ func TestClaimNextSteerFollowUpNoBacklogLeavesMarkerUntouched(t *testing.T) {
 func TestClaimNextSteerFollowUpPersistFailureLeavesBacklog(t *testing.T) {
 	ctx := t.Context()
 	mgr := stream.NewMemoryStreamManager()
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-A", "req-A"))
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess-1", "assist-A", "req-A"))
 	require.NoError(t, mgr.AppendSteerEvents(ctx, "sess-1", "assist-A", []interfaces.StreamEvent{
 		steerEventWithDelivery("after-1", "do this next", steerDeliveryAfter),
 	}))
@@ -327,7 +328,7 @@ func TestClaimNextSteerFollowUpPersistFailureLeavesBacklog(t *testing.T) {
 func TestRebindSteerMovesEventOntoNewLiveRun(t *testing.T) {
 	ctx := t.Context()
 	mgr := stream.NewMemoryStreamManager()
-	require.NoError(t, mgr.SetLiveRun(ctx, "sess-1", "assist-A", "req-A"))
+	require.NoError(t, mgr.ClaimExecution(ctx, "sess-1", "assist-A", "req-A"))
 	h := &Handler{
 		sessionService: &steerOwnedSessionStub{},
 		messageService: &steerMessageLookupStub{
@@ -337,7 +338,7 @@ func TestRebindSteerMovesEventOntoNewLiveRun(t *testing.T) {
 	}
 	evt := steerEventWithDelivery("late-1", "landed on A", steerDeliveryAfter)
 	require.NoError(t, mgr.AppendSteerEvents(ctx, "sess-1", "assist-A", []interfaces.StreamEvent{evt}))
-	require.NoError(t, mgr.ClaimLiveRun(ctx, "sess-1", "assist-B", "req-B"))
+	require.NoError(t, mgr.ReplaceExecution(ctx, "sess-1", "assist-A", "req-A", "assist-B", "req-B"))
 
 	queuedOn, status, err := h.rebindSteerIfLiveRunMoved(ctx, "sess-1", "assist-A", evt)
 	require.NoError(t, err)
@@ -397,7 +398,7 @@ type steerClaimFailingManager struct {
 	interfaces.StreamManager
 }
 
-func (s *steerClaimFailingManager) ClaimLiveRun(context.Context, string, string, string) error {
+func (s *steerClaimFailingManager) ReplaceExecution(context.Context, string, string, string, string, string) error {
 	return errors.New("redis down")
 }
 
@@ -414,7 +415,7 @@ func (s *steerAppendFailingManager) AppendSteerEvents(
 func TestClaimNextSteerFollowUpClaimFailureRollsBackMessages(t *testing.T) {
 	ctx := t.Context()
 	inner := stream.NewMemoryStreamManager()
-	require.NoError(t, inner.SetLiveRun(ctx, "sess-1", "assist-A", "req-A"))
+	require.NoError(t, inner.ClaimExecution(ctx, "sess-1", "assist-A", "req-A"))
 	require.NoError(t, inner.AppendSteerEvents(ctx, "sess-1", "assist-A", []interfaces.StreamEvent{
 		steerEventWithDelivery("after-1", "do this next", steerDeliveryAfter),
 	}))
@@ -429,7 +430,7 @@ func TestClaimNextSteerFollowUpClaimFailureRollsBackMessages(t *testing.T) {
 		&sseStreamContext{assistantMessage: &types.Message{ID: "assist-A"}})
 	assert.False(t, ok)
 	assert.Nil(t, followUp)
-	assert.Empty(t, msgs.byID, "ClaimLiveRun failure must not leave a follow-up turn in the database")
+	assert.Empty(t, msgs.byID, "ReplaceExecution failure must not leave a follow-up turn in the database")
 
 	old, _, err := inner.GetSteerEvents(ctx, "sess-1", "assist-A", 0)
 	require.NoError(t, err)
@@ -440,7 +441,7 @@ func TestClaimNextSteerFollowUpClaimFailureRollsBackMessages(t *testing.T) {
 func TestRebindSteerKeepsEventWhenAppendFails(t *testing.T) {
 	ctx := t.Context()
 	inner := stream.NewMemoryStreamManager()
-	require.NoError(t, inner.SetLiveRun(ctx, "sess-1", "assist-A", "req-A"))
+	require.NoError(t, inner.ClaimExecution(ctx, "sess-1", "assist-A", "req-A"))
 	h := &Handler{
 		sessionService: &steerOwnedSessionStub{},
 		messageService: &steerMessageLookupStub{
@@ -450,7 +451,7 @@ func TestRebindSteerKeepsEventWhenAppendFails(t *testing.T) {
 	}
 	evt := steerEventWithDelivery("late-1", "landed on A", steerDeliveryAfter)
 	require.NoError(t, inner.AppendSteerEvents(ctx, "sess-1", "assist-A", []interfaces.StreamEvent{evt}))
-	require.NoError(t, inner.ClaimLiveRun(ctx, "sess-1", "assist-B", "req-B"))
+	require.NoError(t, inner.ReplaceExecution(ctx, "sess-1", "assist-A", "req-A", "assist-B", "req-B"))
 
 	_, _, err := h.rebindSteerIfLiveRunMoved(ctx, "sess-1", "assist-A", evt)
 	require.Error(t, err)

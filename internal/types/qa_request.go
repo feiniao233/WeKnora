@@ -58,6 +58,7 @@ type QARequest struct {
 	AssistantMessageID  string             // Pre-created assistant message ID
 	ExecutionConfigHash string             // Existing message provenance fingerprint; supplied by the handler
 	SummaryModelID      string             // Optional model override; empty = use agent/KB default
+	ReasoningEffort     string             // Optional per-request override; empty = use agent default
 	CustomAgent         *CustomAgent       // Optional custom agent for config override
 	SharedAgentReadOnly bool               // True only when access came from an agent share; source-workspace writes are forbidden
 	KnowledgeBaseIDs    []string           // Knowledge base IDs to search (from request + @mentions)

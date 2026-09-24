@@ -19,6 +19,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
+	"github.com/Tencent/WeKnora/internal/models/api"
 	"github.com/Tencent/WeKnora/internal/sandbox"
 	"github.com/Tencent/WeKnora/internal/storageurl"
 	"github.com/Tencent/WeKnora/internal/stream"
@@ -54,6 +55,7 @@ type qaRequestContext struct {
 	skillNames            []string
 	disabledToolNames     []string
 	summaryModelID        string
+	reasoningEffort       string
 	localBrowserEnabled   bool
 	webSearchEnabled      bool
 	mentionedItems        types.MentionedItems
@@ -109,6 +111,7 @@ func (rc *qaRequestContext) buildQARequest() *types.QARequest {
 		AssistantMessageID:  rc.assistantMessage.ID,
 		ExecutionConfigHash: rc.assistantMessage.ExecutionContext.ExecutionConfigHash,
 		SummaryModelID:      rc.summaryModelID,
+		ReasoningEffort:     rc.reasoningEffort,
 		CustomAgent:         rc.customAgent,
 		SharedAgentReadOnly: rc.sharedAgentReadOnly,
 		KnowledgeBaseIDs:    rc.knowledgeBaseIDs,
@@ -159,7 +162,23 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	if !validActionID(request.ActionID) {
 		return nil, nil, errors.NewBadRequestError("invalid action_id")
 	}
-	if request.Query == "" {
+	level, validEffort := api.ParseReasoningEffort(request.ReasoningEffort)
+	if !validEffort {
+		return nil, nil, errors.NewBadRequestError(
+			fmt.Sprintf("reasoning_effort must be one of %v", api.AllReasoningEfforts),
+		)
+	}
+	request.ReasoningEffort = string(level)
+
+	// Validate syntax before session lookup or QA work, preserving the original
+	// query text. KnowledgeQA applies its XSS-pattern check later in the chat
+	// pipeline; AgentQA must allow frontend code in conversation text.
+	validatedQuery, valid := secutils.ValidateInputSyntax(request.Query)
+	if !valid {
+		logger.Error(ctx, "Query content is invalid")
+		return nil, nil, errors.NewBadRequestError("Query content contains invalid content")
+	}
+	if validatedQuery == "" {
 		logger.Error(ctx, "Query content is empty")
 		return nil, nil, errors.NewBadRequestError("Query content cannot be empty")
 	}
@@ -468,6 +487,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		skillNames:            secutils.SanitizeForLogArray(skillNames),
 		disabledToolNames:     disabledToolNames,
 		summaryModelID:        secutils.SanitizeForLog(request.SummaryModelID),
+		reasoningEffort:       request.ReasoningEffort,
 		webSearchEnabled:      request.WebSearchEnabled,
 		localBrowserEnabled:   request.LocalBrowserEnabled,
 		mentionedItems:        convertMentionedItems(request.MentionedItems),
@@ -744,10 +764,10 @@ func mergeKnowledgeTargets(requestKBIDs []string, requestKnowledgeIDs []string, 
 type sseStreamContext struct {
 	releaseExecution func()
 	eventBus         *event.EventBus
+	streamHandler    *AgentStreamHandler
 	asyncCtx         context.Context
 	cancel           context.CancelFunc
 	assistantMessage *types.Message
-	streamHandler    *AgentStreamHandler
 	// steerSink bridges the engine's round-boundary drain to the steer
 	// sub-list and user-row persistence. Nil for non-agent modes.
 	steerSink *steerSink
@@ -1422,6 +1442,9 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 			if data.IsFallback {
 				streamCtx.assistantMessage.IsFallback = true
 			}
+			if data.Truncated {
+				markQuickAnswerTruncated(streamCtx.assistantMessage)
+			}
 			if data.Done {
 				if completionHandled {
 					return nil
@@ -1509,23 +1532,19 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 						injected = streamCtx.steerSink.InjectedIDs()
 					}
 					h.discardSteerBacklog(updateCtx, sessionID, streamCtx.assistantMessage.ID, injected)
+					h.completeStreamAssistantMessage(
+						updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
+					)
 				} else {
 					kicked := h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
-					if err := h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query, reqCtx.userMessageID); err != nil {
-						logger.Errorf(updateCtx, "Failed to persist assistant execution: %v", err)
-						_ = streamCtx.streamHandler.handleError(updateCtx, event.Event{Data: event.ErrorData{Error: "execution result could not be saved", Stage: "message_persistence"}})
-					}
+					h.completeStreamAssistantMessage(
+						updateCtx, streamCtx, reqCtx.query, reqCtx.userMessageID,
+					)
 					// A /steer that landed while we were completing still sits
 					// on this run. Claim it before ReleaseExecution so it is not
 					// stranded on a list nobody will drain.
 					if !kicked {
 						h.kickNextRunFromSteerBacklog(updateCtx, reqCtx, streamCtx)
-					}
-				}
-				if streamCtx.asyncCtx.Err() != nil {
-					if err := h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query, reqCtx.userMessageID); err != nil {
-						logger.Errorf(updateCtx, "Failed to persist assistant execution: %v", err)
-						_ = streamCtx.streamHandler.handleError(updateCtx, event.Event{Data: event.ErrorData{Error: "execution result could not be saved", Stage: "message_persistence"}})
 					}
 				}
 				_ = streamCtx.streamHandler.flushCompletion(updateCtx)
@@ -1933,6 +1952,7 @@ func (h *Handler) persistLastRequestState(parentCtx context.Context, reqCtx *qaR
 		AgentID:             reqCtx.reqAgentID,
 		AgentEnabled:        agentEnabled,
 		ModelID:             reqCtx.summaryModelID,
+		ReasoningEffort:     reqCtx.reasoningEffort,
 		KnowledgeBaseIDs:    reqCtx.knowledgeBaseIDs,
 		KnowledgeIDs:        reqCtx.knowledgeIDs,
 		TagIDs:              reqCtx.tagIDs,
@@ -1970,6 +1990,9 @@ func (h *Handler) completeQuickAnswerTurn(
 	if streamCtx.releaseExecution != nil {
 		defer streamCtx.releaseExecution()
 	}
+	// A stop can cancel the generation context after the final answer event
+	// was queued. Preserve the streamed answer just as the Agent defer does.
+	ctx = context.WithoutCancel(ctx)
 	if streamCtx.eventBus != nil {
 		// MessageID is what handleComplete keys on. Leave FinalAnswer empty:
 		// KnowledgeQA already accumulated the answer on the message, and
@@ -1982,17 +2005,7 @@ func (h *Handler) completeQuickAnswerTurn(
 			},
 		})
 	}
-	if err := h.completeAssistantMessage(ctx, streamCtx.assistantMessage, query, userMessageID); err != nil {
-		logger.Errorf(ctx, "Failed to persist assistant execution: %v", err)
-		if streamCtx.streamHandler != nil {
-			_ = streamCtx.streamHandler.handleError(ctx, event.Event{
-				Data: event.ErrorData{Error: "execution result could not be saved", Stage: "message_persistence"},
-			})
-		}
-	}
-	if streamCtx.streamHandler != nil {
-		_ = streamCtx.streamHandler.flushCompletion(ctx)
-	}
+	h.completeStreamAssistantMessage(ctx, streamCtx, query, userMessageID)
 	if streamCtx.releaseTurn != nil {
 		streamCtx.releaseTurn()
 	}
@@ -2019,6 +2032,28 @@ func (h *Handler) sessionTenantInfoContext(ctx context.Context) (context.Context
 	return context.WithValue(ctx, types.TenantInfoContextKey, tenant), true
 }
 
+// completeStreamAssistantMessage makes output readable before notifying clients
+// to perform their final image/artifact fetch. A failed write must not announce
+// a successful completion whose file authorization evidence is still missing.
+func (h *Handler) completeStreamAssistantMessage(
+	ctx context.Context, streamCtx *sseStreamContext, query, userMessageID string,
+) {
+	if err := h.completeAssistantMessage(ctx, streamCtx.assistantMessage, query, userMessageID); err != nil {
+		if streamCtx.streamHandler != nil {
+			_ = streamCtx.streamHandler.handleError(ctx, event.Event{
+				ID: uuid.New().String(), Type: event.EventError, SessionID: streamCtx.assistantMessage.SessionID,
+				Data: event.ErrorData{Stage: "message_persistence", Error: "Failed to save assistant message"},
+			})
+		}
+		return
+	}
+	if streamCtx.streamHandler != nil {
+		if err := streamCtx.streamHandler.publishCompletion(ctx); err != nil {
+			logger.Errorf(ctx, "Append persisted message completion failed: %v", err)
+		}
+	}
+}
+
 // completeAssistantMessage marks an assistant message as complete, updates it,
 // and asynchronously indexes the Q&A pair into the chat history knowledge base.
 func (h *Handler) completeAssistantMessage(
@@ -2030,6 +2065,7 @@ func (h *Handler) completeAssistantMessage(
 		assistantMessage.ExecutionResult = result
 	}
 	if err := h.messageService.UpdateMessage(ctx, assistantMessage); err != nil {
+		logger.Errorf(ctx, "Failed to persist assistant message %s: %v", assistantMessage.ID, err)
 		return err
 	}
 	if assistantMessage.ExecutionResult != nil && assistantMessage.ExecutionResult.Status != "completed" {

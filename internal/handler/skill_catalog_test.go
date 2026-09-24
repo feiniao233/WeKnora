@@ -107,7 +107,7 @@ func newCatalogRouter(h *SkillHandler) *gin.Engine {
 
 func TestCreateCatalogFileReturnsCreatedContent(t *testing.T) {
 	catalog := &fakeSkillCatalog{}
-	router := newCatalogRouter(NewSkillHandler(&fakeUsableSkillLister{}, catalog))
+	router := newCatalogRouter(NewSkillHandler(&fakeUsableSkillLister{}, catalog, nil))
 
 	body, err := json.Marshal(map[string]string{"path": "references/guide.md", "content": "guide\n"})
 	require.NoError(t, err)
@@ -122,7 +122,7 @@ func TestCreateCatalogFileReturnsCreatedContent(t *testing.T) {
 
 func TestUpdateCatalogFileReturnsUpdatedContent(t *testing.T) {
 	catalog := &fakeSkillCatalog{}
-	router := newCatalogRouter(NewSkillHandler(&fakeUsableSkillLister{}, catalog))
+	router := newCatalogRouter(NewSkillHandler(&fakeUsableSkillLister{}, catalog, nil))
 
 	body, err := json.Marshal(map[string]string{"path": "references/runbook.md", "content": "updated\n"})
 	require.NoError(t, err)

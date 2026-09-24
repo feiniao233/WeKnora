@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/models/api"
-	"github.com/Tencent/WeKnora/internal/models/catalog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,7 +31,7 @@ func TestRequiredImagesNeverRetryWithoutImages(t *testing.T) {
 
 			client := New(Config{
 				Endpoint: api.Endpoint{BaseURL: server.URL, Model: "m"},
-				Settings: catalog.DefaultOpenAICompletions(),
+				Settings: api.DefaultOpenAICompletions(),
 			})
 			ctx := api.WithRequiredImages(context.Background())
 			messages := []api.Message{{

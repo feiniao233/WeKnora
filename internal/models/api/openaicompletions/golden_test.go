@@ -607,7 +607,7 @@ func TestChatStream_PrematureEOFFailsTheStream(t *testing.T) {
 
 	c := New(Config{
 		Endpoint: api.Endpoint{BaseURL: server.URL + "/v1", Model: "m", Auth: api.BearerAuth("sk")},
-		Settings: catalog.DefaultOpenAICompletions(),
+		Settings: api.DefaultOpenAICompletions(),
 	})
 	ch, err := c.ChatStream(context.Background(), []api.Message{{Role: "user", Content: "hi"}}, nil)
 	require.NoError(t, err)

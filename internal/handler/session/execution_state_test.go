@@ -63,12 +63,15 @@ func TestActionMetadataIsSavedAndExposedWithoutPrivateContext(t *testing.T) {
 	msg := request.assistantMessage
 	require.Equal(t, "generate_rca_report", msg.ExecutionContext.ActionID)
 	msg.ExecutionContext.LangfuseTraceparent = "private-trace"
+	msg.AgentSteps = types.AgentSteps{{ToolCalls: []types.ToolCall{{Name: "read_file", Result: &types.ToolResult{Success: true, Data: map[string]any{"content_sha256": "sha256:actual-resource"}}}}}}
 	h.messageService = &steerMessageLookupStub{msg: msg}
 	w := httptest.NewRecorder()
 	executionRouter(h).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/sessions/s/messages/m/execution-context", nil))
 	require.Equal(t, 200, w.Code)
 	require.Contains(t, w.Body.String(), `"action_id":"generate_rca_report"`)
 	require.NotContains(t, w.Body.String(), "private-trace")
+	require.Contains(t, w.Body.String(), `"agent_steps"`)
+	require.Contains(t, w.Body.String(), "sha256:actual-resource")
 }
 
 type deniedExecutionSession struct{ interfaces.SessionService }

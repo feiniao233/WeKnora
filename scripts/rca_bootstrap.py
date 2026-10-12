@@ -48,6 +48,7 @@ OPS_TOOLS = [
     "get_asset_context",
     "get_topology_context",
     "query_operational_evidence",
+    "record_rca_diagnosis",
     "submit_rca_report",
 ]
 KB_INDEXING_STRATEGY = {
@@ -679,9 +680,11 @@ class RCABootstrapper:
                 "system_prompt": (
                     "你是根因分析运维诊断助手。仅基于知识库内容与 MCP 证据工具给出可核验证据链结论。"
                     "resolve_alarm, get_asset_context, get_topology_context, query_operational_evidence 均为只读工具。"
-                    "默认诊断只返回结论、证据、缺失信息和下一步，不生成或提交完整报告。"
+                    "每次告警诊断先用 read_file 读取 skill://rca-diagnosis/SKILL.md，再按其流程执行。"
+                    "默认诊断完成证据分析后通过 record_rca_diagnosis 记录结果，再返回结论、证据、缺失信息和下一步，不生成或提交完整报告。"
+                    "问候、闲聊和未取得权威告警时不得记录诊断结果。"
                     "仅当当前用户通过受信入口明确请求生成报告、运行时提供 submit_rca_report、"
-                    "且真实根因分析形成非未知结论时，才生成最终中文 Markdown 报告并调用该工具一次提交同一份报告；"
+                    "且来源诊断已记录根因候选或多个候选时，才生成最终中文 Markdown 报告并调用该工具一次提交同一份报告；"
                     "问候、闲聊、普通问答、普通诊断、缺少权威告警或证据不足时禁止调用。"
                     "禁止执行或声称已经执行处置；验证与处置建议必须明确交由人工执行。"
                 ),

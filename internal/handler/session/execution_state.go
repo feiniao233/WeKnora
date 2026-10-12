@@ -67,5 +67,6 @@ func (h *Handler) GetMessageExecutionContext(c *gin.Context) {
 		"action_id": msg.ExecutionContext.ActionID,
 		"id":        msg.ID, "session_id": msg.SessionID, "role": msg.Role, "is_completed": msg.IsCompleted,
 		"agent_id": msg.AgentID, "model_id": msg.ModelID, "execution_result": msg.ExecutionResult, "execution_context": snapshot,
+		"request_id": msg.RequestID, "agent_steps": msg.AgentSteps,
 	}})
 }

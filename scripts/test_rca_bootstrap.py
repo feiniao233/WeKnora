@@ -266,11 +266,11 @@ class BootstrapTest(unittest.TestCase):
             Path(__file__).parents[1] / "skills/catalog/rca-diagnosis/references/ip-conflict.md"
         ).read_text(encoding="utf-8")
         self.assertIn("配置变更新增地址与另一资产登记地址重复", reference)
-        self.assertIn("结论等级为 `场景匹配`", reference)
-        self.assertIn("不得因缺少动态重叠声明降为 `未知`", reference)
+        self.assertIn("结论类型为 `candidate_found`", reference)
+        self.assertIn("不得因缺少动态重叠声明降为 `insufficient_evidence`", reference)
         self.assertIn("不等于人工确认两台设备同时在线使用", reference)
-        self.assertIn("无候选资产时，结论为 `未知`", reference)
-        self.assertIn("多个候选资产或重新分配证据相互矛盾时，结论为 `存在歧义`", reference)
+        self.assertIn("无候选资产时，结论为 `insufficient_evidence`", reference)
+        self.assertIn("多个候选资产或重新分配证据相互矛盾时，结论为 `multiple_candidates`", reference)
 
 
 if __name__ == "__main__":

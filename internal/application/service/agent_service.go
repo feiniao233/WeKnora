@@ -285,6 +285,12 @@ func (s *agentService) CreateAgentEngine(
 				len(skillsManager.GetAllMetadata()))
 		}
 	}
+	// Interactive clients can end a turn with durable questions. This is a
+	// client capability, not an implicit grant of an external action tool.
+	if config.UserInputEnabled && !config.SkillInstallMode() {
+		toolRegistry.RegisterTool(tools.NewRequestUserInputTool())
+	}
+
 	// Browser operations are native BrowserSkill RPCs, independent of shell and sandbox setup.
 	if config.LocalBrowserEnabled && s.browserSkill.Enabled() && !config.SkillInstallMode() {
 		tenant, _ := types.TenantIDFromContext(ctx)

@@ -1,11 +1,14 @@
 package tools
 
+import "github.com/Tencent/WeKnora/internal/types"
+
 // maxFunctionNameLength is the maximum length for a tool/function name
 // imposed by the OpenAI API.
 const maxFunctionNameLength = 64
 
 // Tool names constants
 const (
+	ToolRequestUserInput = types.RequestUserInputToolName
 	// Capability-scoped MCP discovery and invocation; not tenant-selectable builtins.
 	ToolDiscoverMCPTools = "discover_mcp_tools"
 	ToolCallMCPTool      = "call_mcp_tool"

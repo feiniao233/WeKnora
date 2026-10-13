@@ -38,6 +38,8 @@ const (
 
 // qaRequestContext holds all the common data needed for QA requests
 type qaRequestContext struct {
+	userInputEnabled      bool
+	userInputAnswer       *types.UserInputAnswer
 	ctx                   context.Context
 	c                     *gin.Context
 	sessionID             string
@@ -106,6 +108,7 @@ type qaRequestContext struct {
 func (rc *qaRequestContext) buildQARequest() *types.QARequest {
 	imageURLs, imageDescription := extractImageURLsAndOCRText(rc.images)
 	req := &types.QARequest{
+		UserInputEnabled:    rc.userInputEnabled,
 		Session:             rc.session,
 		Query:               rc.query,
 		AssistantMessageID:  rc.assistantMessage.ID,
@@ -156,6 +159,10 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	if err := c.ShouldBindJSON(&request); err != nil {
 		logger.Error(ctx, "Failed to parse request data", err)
 		return nil, nil, errors.NewBadRequestError(err.Error())
+	}
+
+	if request.UserInputAnswer != nil && (request.ActionID != "" || request.SourceMessageID != "") {
+		return nil, nil, errors.NewBadRequestError("补充问题回答不能与其他会话动作一起提交")
 	}
 
 	// Validate query content
@@ -456,6 +463,7 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 	)
 
 	executionContext.LocalBrowserEnabled = request.LocalBrowserEnabled
+	executionContext.UserInputEnabled = request.UserInputEnabled
 	executionContext.ActionID = request.ActionID
 
 	// Build request context
@@ -490,6 +498,8 @@ func (h *Handler) parseQARequest(c *gin.Context, logPrefix string) (*qaRequestCo
 		reasoningEffort:       request.ReasoningEffort,
 		webSearchEnabled:      request.WebSearchEnabled,
 		localBrowserEnabled:   request.LocalBrowserEnabled,
+		userInputEnabled:      request.UserInputEnabled,
+		userInputAnswer:       request.UserInputAnswer,
 		mentionedItems:        convertMentionedItems(request.MentionedItems),
 		effectiveTenantID:     effectiveTenantID,
 		sharedAgentReadOnly:   sharedAgentReadOnly,
@@ -1155,6 +1165,7 @@ func (h *Handler) persistTurnMessages(ctx context.Context, reqCtx *qaRequestCont
 			userMessageAttachments,
 			reqCtx.channel,
 			reqCtx.suggestionAttribution,
+			reqCtx.userInputAnswer,
 		)
 		if err != nil {
 			return err
@@ -1331,6 +1342,14 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 
 	releaseQATurn, held := h.holdQATurn(ctx, reqCtx)
 	if !held {
+		return
+	}
+
+	if err := h.resolveUserInputAnswer(ctx, reqCtx); err != nil {
+		releaseQATurn()
+		if reqCtx.c != nil {
+			_ = reqCtx.c.Error(errors.NewBadRequestError(err.Error()))
+		}
 		return
 	}
 

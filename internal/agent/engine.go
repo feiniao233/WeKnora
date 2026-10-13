@@ -1063,6 +1063,9 @@ func (e *AgentEngine) runReActIteration(
 		"tool_calls":  toolCallCount,
 		"thought_len": len(step.Thought),
 	})
+	if e.completeWithUserInputRequest(ctx, state, step, sessionID) {
+		return iterOutcomeBreak, nil
+	}
 	if e.completeWithSubmittedRCAReport(ctx, state, step, sessionID) {
 		return iterOutcomeBreak, nil
 	}

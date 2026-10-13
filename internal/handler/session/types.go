@@ -47,6 +47,8 @@ type ImageAttachment struct {
 
 // CreateKnowledgeQARequest defines the request structure for knowledge QA
 type CreateKnowledgeQARequest struct {
+	UserInputEnabled      bool                         `json:"user_input_enabled,omitzero"`
+	UserInputAnswer       *types.UserInputAnswer       `json:"user_input_answer,omitempty"`
 	ActionID              string                       `json:"action_id"`
 	SourceMessageID       string                       `json:"source_message_id"`
 	Query                 string                       `json:"query"              binding:"required"` // Query text for knowledge base search

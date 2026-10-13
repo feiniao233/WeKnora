@@ -361,6 +361,8 @@ func (m *MentionedItems) Scan(value interface{}) error {
 // Each message belongs to a conversation session and can be from either user or system
 // Messages can contain references to knowledge chunks used to generate responses
 type Message struct {
+	// Derived from the existing request snapshot; no additional database column.
+	UserInputAnswer *UserInputAnswer `json:"user_input_answer,omitempty" gorm:"-"`
 	// Unique identifier for the message
 	ID string `json:"id"                    gorm:"type:varchar(36);primaryKey"`
 	// ID of the session this message belongs to
@@ -468,6 +470,8 @@ type MessageExecutionProvenance struct {
 // MessageExecutionContext is a message-level snapshot of the non-secret
 // request state used by derived experiences such as follow-up suggestions.
 type MessageExecutionContext struct {
+	UserInputAnswer  *UserInputAnswer `json:"user_input_answer,omitempty"`
+	UserInputEnabled bool             `json:"user_input_enabled,omitzero"`
 	// ActionID is descriptive UI metadata, never an authorization input.
 	ActionID      string `json:"action_id,omitempty"`
 	ExecutionMode string `json:"execution_mode,omitempty"`

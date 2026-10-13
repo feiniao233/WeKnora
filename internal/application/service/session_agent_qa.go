@@ -336,6 +336,7 @@ func (s *sessionService) buildAgentConfig(
 ) (*types.AgentConfig, error) {
 	customAgent := req.CustomAgent
 	agentConfig := &types.AgentConfig{
+		UserInputEnabled:            req.UserInputEnabled,
 		MaxIterations:               customAgent.Config.MaxIterations,
 		Temperature:                 customAgent.Config.Temperature,
 		WebSearchEnabled:            customAgent.Config.WebSearchEnabled && req.WebSearchEnabled,

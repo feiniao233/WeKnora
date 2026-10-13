@@ -690,7 +690,7 @@ class RCABootstrapper:
                 ),
                 "model_id": self.config.model_id,
                 "rerank_model_id": self.config.rerank_model_id,
-                "max_iterations": 8,
+                "max_iterations": 16,
                 "llm_call_timeout": 90,
                 "mcp_selection_mode": "selected",
                 "mcp_services": [mcp_id],

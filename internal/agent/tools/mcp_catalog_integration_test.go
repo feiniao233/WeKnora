@@ -156,4 +156,42 @@ func TestMCPProxyHTTPApprovalArgumentsAndImages(t *testing.T) {
 	result = invoke(`{"count":2}`)
 	require.False(t, result.Success)
 	require.Equal(t, int32(2), calls.Load())
+
+	// Turn exclusions must apply to discovery as well as execution. Cover
+	// exclusions set before loading and after a definition was already read.
+	for _, alreadyDescribed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "excluded before discovery", true: "excluded after describe"}[alreadyDescribed], func(t *testing.T) {
+			ctx := catalogTestContext()
+			r := NewToolRegistry()
+			_, err := RegisterMCPTools(ctx, r, []*types.MCPService{service}, manager, nil, 0, nil, nil)
+			require.NoError(t, err)
+			if alreadyDescribed {
+				describeTool(ctx, t, r, service.ID, "get_order")
+			}
+			r.DisableTools([]string{"get_order"})
+			r.PrepareMCPTools(ctx)
+			before := calls.Load()
+			for _, mode := range []string{"list_tools", "search"} {
+				args := map[string]any{"mode": mode, "server_id": service.ID}
+				if mode == "search" {
+					args["query"] = "get_order"
+				}
+				page := discoverPage(ctx, t, r, args)
+				require.Empty(t, page.Tools, "excluded tools must not be offered for discovery")
+				require.Zero(t, page.Total)
+			}
+			definition, err := r.ExecuteTool(ctx, ToolDiscoverMCPTools,
+				json.RawMessage(`{"mode":"describe","server_id":"orders","tool_name":"get_order"}`))
+			require.NoError(t, err)
+			require.False(t, definition.Success)
+			require.Contains(t, definition.Error, "disabled for this turn")
+			require.NotContains(t, definition.Output, "input_schema")
+			r.RefreshMCPTools(ctx)
+			require.Nil(t, r.MCPCallTarget(ctx, ToolCallMCPTool, describedRaw))
+			blocked, err := r.ExecuteTool(ctx, ToolCallMCPTool, describedRaw)
+			require.NoError(t, err)
+			require.False(t, blocked.Success)
+			require.Equal(t, before, calls.Load(), "excluded calls must not reach the MCP server")
+		})
+	}
 }

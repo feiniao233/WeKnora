@@ -432,6 +432,7 @@ func mcpJSONResult(value any) (*types.ToolResult, error) {
 type MCPDiscoverTool struct {
 	BaseTool
 	catalog          *MCPCatalog
+	registry         *ToolRegistry
 	directExposure   bool
 	advertiseSources bool
 }
@@ -572,6 +573,7 @@ func installMCPCatalog(registry *ToolRegistry, c *MCPCatalog) {
 		&MCPDiscoverTool{
 			BaseTool: NewBaseTool(ToolDiscoverMCPTools, description, discoveryParameters),
 			catalog:  c,
+			registry: registry,
 		},
 	)
 	registry.RegisterTool(
@@ -676,6 +678,12 @@ func (t *MCPDiscoverTool) Execute(ctx context.Context, raw json.RawMessage) (*ty
 			}
 		}
 		for _, tool := range tools {
+			if t.registry.isToolDisabled(tool) {
+				if args.Mode == "describe" && tool.mcpTool.Name == args.ToolName {
+					return mcpDiscoveryFailure(fmt.Errorf("tool is disabled for this turn"), "unavailable")
+				}
+				continue
+			}
 			if args.Mode == "describe" {
 				if tool.mcpTool.Name != args.ToolName {
 					continue
@@ -944,7 +952,7 @@ func (r *ToolRegistry) MCPCallTarget(ctx context.Context, name string, raw json.
 		return nil
 	}
 	tool := proxy.catalog.cachedTool(ref)
-	if tool == nil || !proxy.catalog.knownCallableRef(ref) {
+	if tool == nil || r.isToolDisabled(tool) || !proxy.catalog.knownCallableRef(ref) {
 		// Listing caches the target, but presentation must stay on call_mcp_tool
 		// until describe has returned this exact schema reference.
 		return nil

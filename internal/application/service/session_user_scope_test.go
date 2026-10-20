@@ -16,6 +16,7 @@ func testSessionScopeContext(tenantID uint64, userID string) context.Context {
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, tenantID)
 	if userID != "" {
 		ctx = context.WithValue(ctx, types.UserIDContextKey, userID)
+		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalWebUser, ID: userID})
 	}
 	return ctx
 }
@@ -187,17 +188,22 @@ func TestGetSessionIsScopedToAPIExternalUser(t *testing.T) {
 	}
 	require.NoError(t, db.Create(tenantSession).Error)
 
-	_, err := svc.GetSession(testAPISessionScopeContext(1, "7:alice"), bobSession.ID)
-	require.ErrorIs(t, err, apperrors.ErrSessionNotFound)
+	// Full-access API keys carry Owner in the legacy role context. That role
+	// must not turn one external user's read into a Web admin console read.
+	for _, role := range []types.TenantRole{types.TenantRoleViewer, types.TenantRoleAdmin, types.TenantRoleOwner} {
+		t.Run(string(role), func(t *testing.T) {
+			ctx := context.WithValue(testAPISessionScopeContext(1, "7:alice"), types.TenantRoleContextKey, role)
+			_, err := svc.GetSession(ctx, bobSession.ID)
+			require.ErrorIs(t, err, apperrors.ErrSessionNotFound)
+			got, err := svc.GetSession(ctx, aliceSession.ID)
+			require.NoError(t, err)
+			require.Equal(t, aliceSession.ID, got.ID)
+			_, err = svc.GetSession(ctx, tenantSession.ID)
+			require.ErrorIs(t, err, apperrors.ErrSessionNotFound)
+		})
+	}
 
-	got, err := svc.GetSession(testAPISessionScopeContext(1, "7:alice"), aliceSession.ID)
-	require.NoError(t, err)
-	require.Equal(t, aliceSession.ID, got.ID)
-
-	_, err = svc.GetSession(testAPISessionScopeContext(1, "7:alice"), tenantSession.ID)
-	require.ErrorIs(t, err, apperrors.ErrSessionNotFound)
-
-	got, err = svc.GetSession(testSessionScopeContext(1, "system-7"), tenantSession.ID)
+	got, err := svc.GetSession(testSessionScopeContext(1, "system-7"), tenantSession.ID)
 	require.NoError(t, err)
 	require.Equal(t, tenantSession.ID, got.ID)
 }

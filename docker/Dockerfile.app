@@ -17,7 +17,12 @@ RUN if [ -n "$APK_MIRROR_ARG" ]; then \
     rm -rf /var/lib/apt/lists/*
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:$PATH
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+ARG RUSTUP_INSTALLER_URL=https://sh.rustup.rs
+ARG RUSTUP_DIST_SERVER=https://static.rust-lang.org
+ARG RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup
+RUN curl --proto '=https' --tlsv1.2 --retry 3 --connect-timeout 15 -fsS "$RUSTUP_INSTALLER_URL" -o /tmp/rustup-init.sh && \
+    sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain stable && \
+    rm /tmp/rustup-init.sh
 COPY scripts/build_browserskill.sh scripts/browserskill-release.json ./scripts/
 ARG TARGETOS
 ARG TARGETARCH
@@ -54,9 +59,13 @@ FROM build-base AS anydoc-builder
 ARG WITH_ANYDOC=1
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:$PATH
+ARG RUSTUP_INSTALLER_URL=https://sh.rustup.rs
+ARG RUSTUP_DIST_SERVER=https://static.rust-lang.org
+ARG RUSTUP_UPDATE_ROOT=https://static.rust-lang.org/rustup
 RUN if [ "$WITH_ANYDOC" = "1" ]; then \
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain stable; \
+        curl --proto '=https' --tlsv1.2 --retry 3 --connect-timeout 15 -fsS "$RUSTUP_INSTALLER_URL" -o /tmp/rustup-init.sh && \
+        sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain stable && \
+        rm /tmp/rustup-init.sh; \
     fi
 COPY scripts/build-anydoc-lib.sh scripts/build-anydoc-lib.sh
 COPY third_party/anydoc-go third_party/anydoc-go

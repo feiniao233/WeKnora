@@ -235,11 +235,13 @@ func RunMigrationsWithOptions(dsn string, opts MigrationOptions) error {
 			return captureMigrationFailure(m, fmt.Errorf("failed to run migrations: %w", err))
 		}
 	}
+
 	// Get current version after migration
 	version, dirty, err := m.Version()
 	if err != nil && err != migrate.ErrNilVersion {
 		return captureMigrationFailure(m, fmt.Errorf("failed to get migration version: %w", err))
 	}
+
 	setMigrationState(version, dirty, "", true)
 
 	if oldVersion != version {

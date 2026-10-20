@@ -129,7 +129,7 @@ func TestReadFileSkillAcceptsOneBasedInitialLineOffset(t *testing.T) {
 	))
 	require.NoError(t, err)
 	require.False(t, result.Success)
-	require.Equal(t, "line_offset is supported only for saved web:// pages", result.Error)
+	require.Equal(t, "line_offset is supported only for web:// and attachment:// files", result.Error)
 }
 
 func TestReadFileInstalledSkillSelectsShellAndDisabledSkillsStayHidden(t *testing.T) {

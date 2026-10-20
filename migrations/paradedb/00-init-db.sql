@@ -56,7 +56,6 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     tenant_id INTEGER NOT NULL,
-    category VARCHAR(64) NOT NULL DEFAULT 'general',
     chunking_config JSONB NOT NULL DEFAULT '{"chunk_size": 512, "chunk_overlap": 50, "split_markers": ["\n\n", "\n", "。"], "keep_separator": true}',
     image_processing_config JSONB NOT NULL DEFAULT '{"enable_multimodal": false, "model_id": ""}',
     embedding_model_id VARCHAR(64) NOT NULL,
@@ -205,6 +204,8 @@ CREATE TABLE IF NOT EXISTS embeddings (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS embeddings_unique_source ON embeddings(source_id, source_type);
+CREATE INDEX IF NOT EXISTS idx_embeddings_knowledge_id ON embeddings(knowledge_id);
+CREATE INDEX IF NOT EXISTS idx_embeddings_chunk_id ON embeddings(chunk_id);
 CREATE INDEX IF NOT EXISTS embeddings_search_idx ON embeddings
 USING bm25 (id, knowledge_base_id, content, knowledge_id, chunk_id)
 WITH (

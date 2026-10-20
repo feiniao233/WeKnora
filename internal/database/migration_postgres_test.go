@@ -18,7 +18,7 @@ import (
 // at a disposable database, for example:
 //
 //	docker run -d --rm -e POSTGRES_PASSWORD=pg -e POSTGRES_DB=weknora -p 55432:5432 \
-//	  paradedb/paradedb:v0.22.6-pg17
+//	  paradedb/paradedb:v0.25.11-pg17
 //	WEKNORA_MIGRATION_TEST_POSTGRES_DSN=postgres://postgres:pg@localhost:55432/weknora?sslmode=disable
 //
 // It checks what SQLite cannot: that 000106 builds its index CONCURRENTLY
@@ -45,10 +45,11 @@ func TestPostgresMigrationsServeAgentHistory(t *testing.T) {
 	require.False(t, dirty)
 	requirePostgresIndexValid(t, db)
 
-	// Down and up again: DROP/CREATE INDEX CONCURRENTLY through golang-migrate.
+	// Exercise the history index migration explicitly, even when later migrations exist.
 	m, err := migrate.New("file://migrations/versioned", dsn)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = m.Close() })
+	require.NoError(t, ignoreNoChange(m.Migrate(106)))
 	require.NoError(t, m.Steps(-1))
 	var indexes int
 	require.NoError(t, db.QueryRow(
@@ -56,6 +57,7 @@ func TestPostgresMigrationsServeAgentHistory(t *testing.T) {
 	require.Zero(t, indexes, "the down migration drops the index")
 	require.NoError(t, m.Steps(1))
 	requirePostgresIndexValid(t, db)
+	require.NoError(t, m.Up())
 
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)

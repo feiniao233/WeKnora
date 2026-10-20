@@ -937,6 +937,11 @@ func (h *AgentStreamHandler) handleComplete(ctx context.Context, evt event.Event
 	if turnUsage != nil {
 		completeData["usage"] = turnUsage
 	}
+	// The chat model that produced the usage, so a consumer can price it.
+	if data.ModelID != "" {
+		h.assistantMessage.ModelID = data.ModelID
+		completeData["model_id"] = data.ModelID
+	}
 	h.completionEvent = &interfaces.StreamEvent{
 		ID:        evt.ID,
 		Type:      types.ResponseTypeComplete,
@@ -968,7 +973,9 @@ func (h *AgentStreamHandler) flushCompletion(ctx context.Context) error {
 	// A failed save may have recorded an error after the last message snapshot.
 	// Report that failure truthfully even when the database is unavailable.
 	completion.Data["execution_result"] = executionResult(h.ctx)
-	completion.Data["model_id"] = h.assistantMessage.ModelID
+	if h.assistantMessage.ModelID != "" {
+		completion.Data["model_id"] = h.assistantMessage.ModelID
+	}
 	completion.Data["request_id"] = h.requestID
 	err := h.streamManager.AppendEvent(ctx, h.sessionID, h.assistantMessageID, *completion)
 	if err == nil {
@@ -991,7 +998,9 @@ func (h *AgentStreamHandler) publishCompletion(ctx context.Context) error {
 		h.completionEvent.Data = map[string]interface{}{}
 	}
 	h.completionEvent.Data["execution_result"] = executionResult(h.ctx)
-	h.completionEvent.Data["model_id"] = h.assistantMessage.ModelID
+	if h.assistantMessage.ModelID != "" {
+		h.completionEvent.Data["model_id"] = h.assistantMessage.ModelID
+	}
 	h.completionEvent.Data["request_id"] = h.requestID
 	if err := h.streamManager.AppendEvent(ctx, h.sessionID, h.assistantMessageID, *h.completionEvent); err != nil {
 		return err

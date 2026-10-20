@@ -48,21 +48,17 @@ Steel 通过 `mcp-app` 提供 RCA 所需的原生助手、知识库、Skill、Ag
 
 ## 上游升级流程
 
-私有 `main` 只接收通过验收的版本。官方仓库作为 `upstream`，按发布标签合并到临时分支，不在私有 `main` 上直接 rebase。
+从当前 AI 分支创建集成分支，按官方发布标签合并。保留仍有验收要求的私有行为，
+删除已被上游替代的实现；不把发布后的 main 提交混入同一版本。
 
 ```bash
-git remote add upstream https://github.com/Tencent/WeKnora.git  # 首次执行
-git fetch upstream --tags
-git switch -c integrate/upstream-<version> main
-git merge --no-ff <upstream-tag>
+git fetch https://github.com/Tencent/WeKnora.git tag v0.8.3
+git switch -c integrate/upstream-v0.8.3 ai/rca-private-fork
+git merge --no-ff --no-commit v0.8.3
 ```
 
-合并前备份 PostgreSQL、`.env`、`config/` 和当前 app 镜像标签。合并后至少执行：
-
-```bash
-go test ./internal/handler ./internal/handler/session ./internal/router
-python3 scripts/test_rca_bootstrap.py
-```
+数据库迁移与现有数据升级按 [v0.8.3 升级说明](rca-v0.8.3-upgrade.md) 验证。
+完成合并、迁移验证和相关测试后集中提交并推送；部署按本次授权单独执行。
 
 初始化时必须显式传入三个模型 ID 和 RCA Agent 使用的 Sandbox 配置 ID：
 
@@ -77,8 +73,6 @@ python3 scripts/rca_bootstrap.py \
 技能安装器默认复用 `--model-id`。需要使用不同模型时额外传入 `--skill-installer-model-id <id>`。技能安装失败或等待超时会使初始化直接失败，不会留下指向未就绪技能的 RCA Agent。
 
 随后在隔离环境验证数据库迁移、知识入库、检索、Agent 工具白名单、原生 SSE 对话、报告确认和旧会话读取。通过一条真实告警试点后再更新生产镜像标签。
-
-当前迁移线以全新数据库为基线，不再修复私有 fork 历史上与上游重复使用迁移编号的旧库。升级到本迁移线时必须新建数据库，再通过标准 API 初始化 RCA 资源；不得让旧私有数据库原地升级。
 
 ## 回滚与升级红线
 
@@ -104,6 +98,6 @@ WeKnora 的通用前端和 Embed 实现保留上游源码，但不属于 RCA 生
 - 上传可选传入 `summary_model_id`，否则使用助手默认对话模型。服务端在资源租户内核验模型类型及图片能力，图片仍要求助手开启图片上传。
 - 对话模型支持图片时，临时图片保留原图，发送时通过会话鉴权读取并传给模型；文本模型沿用既有视觉模型解析。发送时重新检查实际模型，切换至文本模型后需要可用的备用视觉模型。
 - 显式提供图片的 Agent 轮次禁止供应商报错后的静默去图重试。解析为空、图片不可用或模型能力不足时终止本次分析。
-- 历史消息保留附件元数据和已有解析文字，不长期保存原图 base64。需要再次读取仅以原图输入的历史图片细节时，提示重新附加图片。
+- 历史消息保留附件元数据和已有解析文字，不长期保存原图 base64。历史附件通过上游 `attachment://` 地址按会话权限再次读取；附件已不可用时明确报告读取失败。
 
-同步上游时重点复验临时附件解析、Agent 图片传递以及 `remote_api.go` 的兼容重试入口，覆盖无备用模型直传、旧 VLM、上传后切换模型、五张图片和跨会话权限拒绝。本段记录实现约定，不代表已经部署或通过真实模型验收。
+同步上游时重点复验临时附件解析、Agent 图片传递以及 各模型协议适配器的图片重试入口，覆盖无备用模型直传、旧 VLM、上传后切换模型、五张图片和跨会话权限拒绝。本段记录实现约定，不代表已经部署或通过真实模型验收。

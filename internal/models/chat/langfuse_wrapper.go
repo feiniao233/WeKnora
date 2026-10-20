@@ -3,7 +3,9 @@ package chat
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/tracing/langfuse"
@@ -216,6 +218,13 @@ func buildLangfuseMessages(messages []Message) []map[string]interface{} {
 		if len(m.MultiContent) > 0 {
 			entry["content"] = m.MultiContent
 		}
+		if len(m.Images) > 0 {
+			images := make([]string, len(m.Images))
+			for i, img := range m.Images {
+				images[i] = describeLangfuseImage(img)
+			}
+			entry["images"] = images
+		}
 		if m.Name != "" {
 			entry["name"] = m.Name
 		}
@@ -231,6 +240,16 @@ func buildLangfuseMessages(messages []Message) []map[string]interface{} {
 		out = append(out, entry)
 	}
 	return out
+}
+
+// describeLangfuseImage keeps base64 payloads out of traces: a data URI is
+// recorded as its media type and size, a URL as itself.
+func describeLangfuseImage(img string) string {
+	if !strings.HasPrefix(img, "data:") {
+		return img
+	}
+	mediaType, _, _ := strings.Cut(strings.TrimPrefix(img, "data:"), ";")
+	return fmt.Sprintf("data:%s (%d KB)", mediaType, (len(img)+1023)/1024)
 }
 
 func buildLangfuseGenerationOutput(

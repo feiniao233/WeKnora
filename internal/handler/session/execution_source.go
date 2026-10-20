@@ -105,7 +105,7 @@ func (h *Handler) applySourceExecution(ctx context.Context, session *types.Sessi
 	request.SkillNames = slices.Clone(source.SkillNames)
 	request.MCPServiceIDs = slices.Clone(source.MCPServiceIDs)
 	request.KnowledgeBaseIDs = slices.Clone(source.KnowledgeBaseIDs)
-	request.KnowledgeIds = slices.Clone(source.KnowledgeIDs)
+	request.KnowledgeIDs = slices.Clone(source.KnowledgeIDs)
 	request.TagIDs = slices.Clone(source.TagIDs)
 	request.WebSearchEnabled = source.WebSearchEnabled
 	request.MentionedItems = nil

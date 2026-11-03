@@ -40,7 +40,6 @@ func TestFailedExecutionIsSavedBeforeCompletion(t *testing.T) {
 	message := &types.Message{ID: "message", ModelID: "deepseek-test"}
 	stream := &executionTestStream{}
 	handler := NewAgentStreamHandler(ctx, "session", message.ID, "request", 1, time.Now(), message, stream, event.NewEventBus(), nil, nil, nil)
-	handler.deferCompletion = true
 	require.NoError(t, handler.handleFinalAnswer(ctx, event.Event{ID: "answer", Data: event.AgentFinalAnswerData{Content: "已有发现"}}))
 	require.NoError(t, handler.handleError(ctx, event.Event{Data: event.ErrorData{Error: "429 secret-provider-body"}}))
 	// The service can propagate the same failure again; only one error is sent.

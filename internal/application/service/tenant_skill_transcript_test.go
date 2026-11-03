@@ -75,6 +75,8 @@ func (s *transcriptStreams) ReleaseExecution(context.Context, string, string, st
 	return nil
 }
 
+func (s *transcriptStreams) ResetEvents(context.Context, string, string) error { return nil }
+
 func (s *transcriptStreams) types() []types.ResponseType {
 	out := make([]types.ResponseType, 0, len(s.events))
 	for _, evt := range s.events {

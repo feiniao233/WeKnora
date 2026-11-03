@@ -46,6 +46,10 @@ func (s *imageModels) Predict(context.Context, [][]byte, string) (string, error)
 	return "parsed screenshot", nil
 }
 
+func (s *imageModels) PredictWithOptions(ctx context.Context, images [][]byte, prompt string, _ *vlm.PredictOptions) (string, error) {
+	return s.Predict(ctx, images, prompt)
+}
+
 type imageDocuments struct {
 	interfaces.TemporaryDocumentService
 	data   []byte

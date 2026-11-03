@@ -125,25 +125,27 @@ func (s *sessionService) restrictTagScopesToAgentScope(
 	return filtered
 }
 
-// resolveChatModelID resolves the effective chat model ID for a QA request.
+// resolveChatModelID resolves the effective chat model ID and its execution tenant.
+// KB-derived models are scoped only after checking read access to the KB.
 //
 // When a user-configured agent is selected, its model configuration must be
 // complete and valid. The internal wiki fixer is the one exception: it is not
 // exposed in the agent UI, so an empty model_id falls back to KB/system model
 // selection. A request-level override may choose another valid model for this
-// request, but it must not make an unconfigured or stale agent appear usable.
+// request, including when the saved default is unavailable. An unavailable
+// explicit override fails instead of silently selecting a different model.
 //
-// Without an agent, the legacy KB / session / system fallback remains
+// Without an agent, the KB / system fallback remains
 // available for non-agent callers.
 func (s *sessionService) resolveChatModelID(
 	ctx context.Context,
 	req *types.QARequest,
 	knowledgeBaseIDs []string,
 	knowledgeIDs []string,
-) (string, error) {
+) (string, uint64, error) {
 	summaryModelID := req.SummaryModelID
 	customAgent := req.CustomAgent
-	session := req.Session
+	tenantID, _ := types.TenantIDFromContext(ctx)
 	configuredAgentModelID := ""
 	// A shared agent runs in its owner's workspace, where an override could
 	// pick any of the owner's models rather than the one the agent was
@@ -158,35 +160,36 @@ func (s *sessionService) resolveChatModelID(
 	if summaryModelID = strings.TrimSpace(summaryModelID); summaryModelID != "" {
 		model, err := s.modelService.GetModelByID(ctx, summaryModelID)
 		if err != nil || model == nil || model.Type != types.ModelTypeKnowledgeQA {
-			return "", fmt.Errorf("requested chat model is unavailable")
+			return "", 0, fmt.Errorf("requested chat model is unavailable")
 		}
-		return summaryModelID, nil
+		return summaryModelID, tenantID, nil
 	}
 
 	if customAgent != nil {
 		configuredAgentModelID = strings.TrimSpace(customAgent.Config.ModelID)
-		if configuredAgentModelID == "" && customAgent.ID != types.BuiltinWikiFixerID {
-			return "", fmt.Errorf("chat model is not configured: please set model_id on agent %s", customAgent.ID)
+		if configuredAgentModelID == "" && !types.UsesWorkspaceModelFallback(customAgent) {
+			return "", 0, fmt.Errorf("chat model is not configured: please set model_id on agent %s", customAgent.ID)
 		}
 		if configuredAgentModelID != "" {
 			model, err := s.modelService.GetModelByID(ctx, configuredAgentModelID)
 			if err != nil || model == nil || model.Type != types.ModelTypeKnowledgeQA {
-				return "", fmt.Errorf("configured chat model %s is unavailable for agent %s", configuredAgentModelID, customAgent.ID)
+				return "", 0, fmt.Errorf(
+					"configured chat model %s is unavailable for agent %s", configuredAgentModelID, customAgent.ID,
+				)
 			}
 		} else {
-			// The wiki fixer is an internal agent and is intentionally omitted
-			// from the agent-management list. It therefore cannot receive a
-			// user-configured model_id; resolve it from the current Wiki KB or
-			// the normal system KnowledgeQA fallback below instead.
-			logger.Infof(ctx, "No model_id configured for internal wiki fixer %s, using KB/system fallback", customAgent.ID)
+			// Internal built-in agents are omitted from the agent-management
+			// list, so they cannot receive a user-configured model_id; resolve
+			// it from the current KB or the system KnowledgeQA fallback below.
+			logger.Infof(ctx, "No model_id configured for internal agent %s, using KB/system fallback", customAgent.ID)
 		}
 	}
 
 	if configuredAgentModelID != "" {
 		logger.Infof(ctx, "Using custom agent's model_id: %s", configuredAgentModelID)
-		return configuredAgentModelID, nil
+		return configuredAgentModelID, tenantID, nil
 	}
-	return s.selectChatModelID(ctx, session, knowledgeBaseIDs, knowledgeIDs)
+	return s.selectChatModelID(ctx, knowledgeBaseIDs, knowledgeIDs)
 }
 
 // resolveRetrievalTenantID determines the tenant ID to use for retrieval scope.

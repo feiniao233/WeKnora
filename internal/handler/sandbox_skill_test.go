@@ -1041,6 +1041,8 @@ func (m *transcriptStreamManager) ReleaseExecution(context.Context, string, stri
 	return nil
 }
 
+func (m *transcriptStreamManager) ResetEvents(context.Context, string, string) error { return nil }
+
 func (m *transcriptStreamManager) readKey() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()

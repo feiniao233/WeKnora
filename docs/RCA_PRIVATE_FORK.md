@@ -52,13 +52,15 @@ Steel 通过 `mcp-app` 提供 RCA 所需的原生助手、知识库、Skill、Ag
 删除已被上游替代的实现；不把发布后的 main 提交混入同一版本。
 
 ```bash
-git fetch https://github.com/Tencent/WeKnora.git tag v0.8.3
-git switch -c integrate/upstream-v0.8.3 ai/rca-private-fork
-git merge --no-ff --no-commit v0.8.3
+git fetch https://github.com/Tencent/WeKnora.git tag v0.9.0
+git switch -c integrate/upstream-v0.9.0 ai/rca-private-fork
+git merge --no-ff --no-commit v0.9.0
 ```
 
-数据库迁移与现有数据升级按 [v0.8.3 升级说明](rca-v0.8.3-upgrade.md) 验证。
-完成合并、迁移验证和相关测试后集中提交并推送；部署按本次授权单独执行。
+数据库与跨仓库接入条件见 [v0.9.0 升级说明](rca-v0.9.0-upgrade.md)。
+本次仅升级 WeKnora 源码：Steel 分支暂不可修改，现有追问契约保留至配套切换。
+完成本阶段检查后集中提交并推送；现有私有库升级、Steel 联调和部署分别按说明处理，
+代码合并完成不代表当前部署可以直接更新镜像。
 
 初始化时必须显式传入三个模型 ID 和 RCA Agent 使用的 Sandbox 配置 ID：
 
